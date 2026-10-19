@@ -1,0 +1,282 @@
+import { describe, it, expect, beforeEach } from 'vitest';
+import { 
+  hotelService, 
+  roomService, 
+  guestService, 
+  reservationService, 
+  folioService, 
+  orderService, 
+  housekeepingService, 
+  maintenanceService,
+  qrService 
+} from '../services/demoDataService';
+
+describe('STAYNEXA CORE HOTEL OPERATING SYSTEM TEST SUITE', () => {
+
+  // ─── 1. MULTI-TENANT ISOLATION TESTS ──────────────────────────────────────
+  describe('Multi-Tenant Isolation', () => {
+    it('should strictly isolate rooms by hotel_id', () => {
+      const hotel1Rooms = roomService.getAll('hotel-001');
+      const hotel2Rooms = roomService.getAll('hotel-002');
+      const hotel3Rooms = roomService.getAll('hotel-003');
+
+      expect(hotel1Rooms.length).toBeGreaterThan(0);
+      expect(hotel2Rooms.length).toBeGreaterThan(0);
+      expect(hotel3Rooms.length).toBeGreaterThan(0);
+
+      // Verify no room from Hotel 1 exists in Hotel 2
+      const hotel1RoomIds = hotel1Rooms.map(r => r.id);
+      hotel2Rooms.forEach(r => {
+        expect(hotel1RoomIds).not.toContain(r.id);
+        expect(r.hotel_id).toBe('hotel-002');
+      });
+    });
+
+    it('should strictly isolate reservations by hotel_id', () => {
+      const hotel1Reservations = reservationService.getAll('hotel-001');
+      const hotel2Reservations = reservationService.getAll('hotel-002');
+
+      expect(hotel1Reservations.every(r => r.hotel_id === 'hotel-001')).toBe(true);
+      expect(hotel2Reservations.every(r => r.hotel_id === 'hotel-002')).toBe(true);
+    });
+
+    it('should isolate guests across hotels', () => {
+      const hotel1Guests = guestService.getAll('hotel-001');
+      const hotel2Guests = guestService.getAll('hotel-002');
+
+      expect(hotel1Guests.every(g => g.hotel_id === 'hotel-001')).toBe(true);
+      expect(hotel2Guests.every(g => g.hotel_id === 'hotel-002')).toBe(true);
+    });
+  });
+
+  // ─── 2. RESERVATION & CHECK-IN / CHECK-OUT LIFECYCLE ───────────────────────
+  describe('Reservation Operations & Lifecycle', () => {
+    it('should create a reservation with CONFIRMED status and accurate pricing', () => {
+      const newRes = reservationService.create({
+        hotel_id: 'hotel-001',
+        guest_id: 'guest-001',
+        room_type_id: 'rt-001',
+        status: 'CONFIRMED',
+        source: 'DIRECT',
+        check_in_date: '2026-11-01',
+        check_out_date: '2026-11-04',
+        adults: 2,
+        children: 0,
+        nights: 3,
+        rate_per_night: 4500,
+        total_amount: 15930, // 3 * 4500 + 18% GST
+        tax_amount: 2430,
+        discount_amount: 0,
+        deposit_amount: 3000,
+      });
+
+      expect(newRes.id).toBeDefined();
+      expect(newRes.status).toBe('CONFIRMED');
+      expect(newRes.total_amount).toBe(15930);
+    });
+
+    it('should check in a reservation: mark room OCCUPIED and reservation CHECKED_IN', () => {
+      // Find an available room
+      const availableRoom = roomService.getAll('hotel-001').find(r => r.status === 'AVAILABLE');
+      expect(availableRoom).toBeDefined();
+
+      const res = reservationService.create({
+        hotel_id: 'hotel-001',
+        guest_id: 'guest-002',
+        room_type_id: availableRoom!.room_type_id,
+        status: 'CONFIRMED',
+        source: 'WALK_IN',
+        check_in_date: '2026-10-20',
+        check_out_date: '2026-10-22',
+        adults: 1,
+        children: 0,
+        nights: 2,
+        rate_per_night: 5000,
+        total_amount: 11800,
+        tax_amount: 1800,
+        discount_amount: 0,
+        deposit_amount: 0,
+      });
+
+      // Perform check-in
+      const checkedInRes = reservationService.checkIn(res.id, availableRoom!.id);
+      expect(checkedInRes).toBeDefined();
+      expect(checkedInRes!.status).toBe('CHECKED_IN');
+      expect(checkedInRes!.actual_check_in).toBeDefined();
+
+      // Verify room status is now OCCUPIED
+      const updatedRoom = roomService.getById(availableRoom!.id);
+      expect(updatedRoom?.status).toBe('OCCUPIED');
+    });
+
+    it('should check out a reservation: mark reservation CHECKED_OUT and room DIRTY for cleaning', () => {
+      // Create and check in
+      const room = roomService.create({
+        hotel_id: 'hotel-001',
+        room_type_id: 'rt-001',
+        number: 'TEST-999',
+        floor: 9,
+        status: 'AVAILABLE',
+        housekeeping_status: 'CLEAN',
+        is_active: true,
+      });
+
+      const res = reservationService.create({
+        hotel_id: 'hotel-001',
+        guest_id: 'guest-001',
+        room_type_id: room.room_type_id,
+        status: 'CONFIRMED',
+        source: 'DIRECT',
+        check_in_date: '2026-10-18',
+        check_out_date: '2026-10-19',
+        adults: 1,
+        children: 0,
+        nights: 1,
+        rate_per_night: 4500,
+        total_amount: 5310,
+        tax_amount: 810,
+        discount_amount: 0,
+        deposit_amount: 0,
+      });
+
+      reservationService.checkIn(res.id, room.id);
+      expect(roomService.getById(room.id)?.status).toBe('OCCUPIED');
+
+      // Now check out
+      const checkedOut = reservationService.checkOut(res.id);
+      expect(checkedOut?.status).toBe('CHECKED_OUT');
+
+      // Crucial hospitality rule: Room operational status becomes AVAILABLE but housekeeping status becomes DIRTY
+      const releasedRoom = roomService.getById(room.id);
+      expect(releasedRoom?.status).toBe('AVAILABLE');
+      expect(releasedRoom?.housekeeping_status).toBe('DIRTY');
+    });
+  });
+
+  // ─── 3. FINANCIAL FOLIO & PAYMENT LEDGER ───────────────────────────────────
+  describe('Financial Folio Ledger Calculation', () => {
+    it('should accurately calculate posted charges, payments, and outstanding balance', () => {
+      const folio = folioService.getByReservation('res-001');
+      expect(folio).toBeDefined();
+
+      const initialCharges = folio!.total_charges;
+      const initialPayments = folio!.total_payments;
+      const initialOutstanding = folio!.outstanding;
+
+      expect(initialOutstanding).toBe(initialCharges - initialPayments);
+
+      // Post a restaurant room charge
+      const addedItem = folioService.addItem({
+        folio_id: folio!.id,
+        hotel_id: 'hotel-001',
+        description: 'Tandoori Platter Room Service',
+        category: 'ROOM_SERVICE',
+        quantity: 1,
+        unit_price: 1000,
+        tax_percent: 5,
+        tax_amount: 50,
+        discount_amount: 0,
+        total: 1050,
+        posted_at: new Date().toISOString(),
+      });
+
+      expect(addedItem.total).toBe(1050);
+
+      // Refetch folio
+      const updatedFolio = folioService.getById(folio!.id);
+      expect(updatedFolio?.total_charges).toBe(initialCharges + 1050);
+      expect(updatedFolio?.outstanding).toBe(initialOutstanding + 1050);
+
+      // Record a payment
+      folioService.addPayment({
+        hotel_id: 'hotel-001',
+        folio_id: folio!.id,
+        guest_id: folio!.guest_id,
+        amount: 1050,
+        method: 'UPI',
+        reference: 'UPI-TEST-123',
+      });
+
+      const settledFolio = folioService.getById(folio!.id);
+      expect(settledFolio?.total_payments).toBe(initialPayments + 1050);
+      expect(settledFolio?.outstanding).toBe(initialOutstanding);
+    });
+  });
+
+  // ─── 4. RESTAURANT & KITCHEN DISPLAY WORKFLOW ─────────────────────────────
+  describe('Restaurant & KDS Workflow', () => {
+    it('should advance order status sequentially: PENDING -> ACCEPTED -> PREPARING -> READY -> DELIVERED', () => {
+      const order = orderService.create({
+        hotel_id: 'hotel-001',
+        status: 'PENDING',
+        type: 'ROOM_SERVICE',
+        subtotal: 500,
+        tax_amount: 25,
+        total: 525,
+        charge_to_room: true,
+        items: [
+          { menu_item_id: 'mi-001', name: 'Paneer Tikka', quantity: 1, unit_price: 500, tax_percent: 5, total: 525 }
+        ]
+      });
+
+      expect(order.status).toBe('PENDING');
+
+      // KDS Accept
+      const accepted = orderService.updateStatus(order.id, 'ACCEPTED');
+      expect(accepted?.status).toBe('ACCEPTED');
+      expect(accepted?.accepted_at).toBeDefined();
+
+      // KDS Start Preparing
+      const preparing = orderService.updateStatus(order.id, 'PREPARING');
+      expect(preparing?.status).toBe('PREPARING');
+      expect(preparing?.preparing_at).toBeDefined();
+
+      // KDS Mark Ready
+      const ready = orderService.updateStatus(order.id, 'READY');
+      expect(ready?.status).toBe('READY');
+      expect(ready?.ready_at).toBeDefined();
+
+      // Waiter / Delivery Complete
+      const delivered = orderService.updateStatus(order.id, 'DELIVERED');
+      expect(delivered?.status).toBe('DELIVERED');
+      expect(delivered?.delivered_at).toBeDefined();
+    });
+  });
+
+  // ─── 5. HOUSEKEEPING WORKFLOW ──────────────────────────────────────────────
+  describe('Housekeeping Task & Room State Synchronization', () => {
+    it('should complete task and set room status to CLEAN', () => {
+      const task = housekeepingService.getTasks('hotel-001')[0];
+      expect(task).toBeDefined();
+
+      housekeepingService.updateTask(task.id, { status: 'COMPLETED' });
+
+      const updatedRoom = roomService.getById(task.room_id);
+      expect(updatedRoom?.housekeeping_status).toBe('CLEAN');
+    });
+  });
+
+  // ─── 6. QR CODE TOKEN RESOLUTION ──────────────────────────────────────────
+  describe('QR Code Token Resolution Security', () => {
+    it('should resolve a valid cryptographic token to the exact hotel and room', () => {
+      const resolved = qrService.getByToken('gp-r101-abc123');
+      expect(resolved).toBeDefined();
+      expect(resolved?.hotel?.id).toBe('hotel-001');
+      expect(resolved?.hotel?.name).toBe('Grand Palace Hotel');
+      expect(resolved?.room?.number).toBe('101');
+    });
+
+    it('should reject invalid or non-existent QR tokens', () => {
+      const invalid = qrService.getByToken('fake-malicious-token-xyz');
+      expect(invalid).toBeUndefined();
+    });
+
+    it('should reject deactivated QR tokens', () => {
+      const qr = qrService.generate('hotel-001', 'room-001');
+      expect(qrService.getByToken(qr.token)).toBeDefined();
+
+      qrService.deactivate(qr.id);
+      expect(qrService.getByToken(qr.token)).toBeUndefined();
+    });
+  });
+});
