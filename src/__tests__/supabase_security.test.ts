@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import fs from 'fs';
+import path from 'path';
 import { isSupabaseConfigured, isDemoMode } from '../lib/supabase';
 import { hotelService, roomService, reservationService, qrService } from '../services/demoDataService';
 
@@ -88,6 +90,81 @@ describe('STAYNEXA SECURITY & SUPABASE INTEGRATION AUDIT SUITE', () => {
       expect(qrService.getByToken('invalid-token')).toBeUndefined();
       expect(qrService.getByToken('')).toBeUndefined();
       expect(qrService.getByToken("' OR '1'='1")).toBeUndefined();
+    });
+  });
+
+  // ─── 4. POSTGRESQL SCHEMA MIGRATION ORDER & DEPENDENCY AUDIT ──────────────
+  describe('PostgreSQL Schema Migration Order & Dependency Audit', () => {
+    // Read the actual migration file from disk
+    const migrationPath = path.resolve(process.cwd(), 'supabase/migrations/20240101000000_staynexa_schema.sql');
+    const sqlContent = fs.readFileSync(migrationPath, 'utf-8');
+
+    it('should define core tables (hotels, profiles, hotel_memberships) BEFORE helper functions', () => {
+      const hotelsIdx = sqlContent.indexOf('CREATE TABLE IF NOT EXISTS hotels ');
+      const profilesIdx = sqlContent.indexOf('CREATE TABLE IF NOT EXISTS profiles ');
+      const membershipsIdx = sqlContent.indexOf('CREATE TABLE IF NOT EXISTS hotel_memberships ');
+      const authHotelIdIdx = sqlContent.indexOf('CREATE OR REPLACE FUNCTION auth_hotel_id()');
+      const isSuperAdminIdx = sqlContent.indexOf('CREATE OR REPLACE FUNCTION is_super_admin()');
+
+      expect(hotelsIdx).toBeGreaterThan(-1);
+      expect(profilesIdx).toBeGreaterThan(-1);
+      expect(membershipsIdx).toBeGreaterThan(-1);
+      expect(authHotelIdIdx).toBeGreaterThan(-1);
+      expect(isSuperAdminIdx).toBeGreaterThan(-1);
+
+      // Core dependencies must precede helper functions that query them
+      expect(hotelsIdx).toBeLessThan(authHotelIdIdx);
+      expect(profilesIdx).toBeLessThan(authHotelIdIdx);
+      expect(membershipsIdx).toBeLessThan(authHotelIdIdx);
+      expect(profilesIdx).toBeLessThan(isSuperAdminIdx);
+    });
+
+    it('should define hotel_memberships AFTER profiles and hotels to satisfy FK constraints', () => {
+      const hotelsIdx = sqlContent.indexOf('CREATE TABLE IF NOT EXISTS hotels ');
+      const profilesIdx = sqlContent.indexOf('CREATE TABLE IF NOT EXISTS profiles ');
+      const membershipsIdx = sqlContent.indexOf('CREATE TABLE IF NOT EXISTS hotel_memberships ');
+
+      expect(hotelsIdx).toBeLessThan(membershipsIdx);
+      expect(profilesIdx).toBeLessThan(membershipsIdx);
+    });
+
+    it('should define helper functions BEFORE any Row-Level Security policies', () => {
+      const authHotelIdIdx = sqlContent.indexOf('CREATE OR REPLACE FUNCTION auth_hotel_id()');
+      const isSuperAdminIdx = sqlContent.indexOf('CREATE OR REPLACE FUNCTION is_super_admin()');
+      const firstPolicyIdx = sqlContent.indexOf('CREATE POLICY');
+
+      expect(firstPolicyIdx).toBeGreaterThan(-1);
+      expect(authHotelIdIdx).toBeLessThan(firstPolicyIdx);
+      expect(isSuperAdminIdx).toBeLessThan(firstPolicyIdx);
+    });
+
+    it('should verify auth_hotel_id() strictly queries hotel_memberships.user_id = auth.uid()', () => {
+      expect(sqlContent).toContain('FROM hotel_memberships');
+      expect(sqlContent).toContain('user_id = auth.uid()');
+      expect(sqlContent).toContain('is_active = true');
+    });
+
+    it('should enforce idempotency by using DROP POLICY IF EXISTS before CREATE POLICY', () => {
+      const createPolicyCount = (sqlContent.match(/CREATE POLICY/g) || []).length;
+      const dropPolicyCount = (sqlContent.match(/DROP POLICY IF EXISTS/g) || []).length;
+
+      expect(createPolicyCount).toBeGreaterThan(0);
+      expect(dropPolicyCount).toBe(createPolicyCount);
+    });
+
+    it('should enable Row-Level Security across all core domain tables', () => {
+      const requiredRlsTables = [
+        'hotels', 'hotel_domains', 'hotel_branding', 'hotel_settings', 'hotel_policies',
+        'profiles', 'departments', 'hotel_memberships', 'room_types', 'rooms',
+        'guests', 'reservations', 'folios', 'folio_items', 'payments', 'invoices',
+        'menu_categories', 'menu_items', 'orders', 'order_items', 'hotel_services',
+        'service_requests', 'housekeeping_tasks', 'maintenance_tickets', 'qr_codes',
+        'notifications', 'activity_logs', 'subscriptions', 'feature_flags'
+      ];
+
+      for (const table of requiredRlsTables) {
+        expect(sqlContent).toContain(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY;`);
+      }
     });
   });
 });
