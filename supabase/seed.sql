@@ -1,5 +1,7 @@
 -- ============================================================================
--- STAYNEXA - SEED DATA FOR DEMO HOTELS
+-- STAYNEXA - SEED DATA FOR DEMO HOTELS & COMPLETE OPERATIONAL ECOSYSTEM
+-- ============================================================================
+-- Reproducible PostgreSQL Seed Data covering all core hospitality entities
 -- ============================================================================
 
 -- 1. Insert 3 Distinct Hotels
@@ -33,3 +35,76 @@ VALUES
 ('00000000-0000-0000-0000-000000000002', 'STARTER', 'ACTIVE', '2024-01-01', '2024-12-31'),
 ('00000000-0000-0000-0000-000000000003', 'ENTERPRISE', 'ACTIVE', '2024-01-01', '2024-12-31')
 ON CONFLICT (hotel_id) DO NOTHING;
+
+-- 5. Operational Departments
+INSERT INTO departments (id, hotel_id, name, code, description)
+VALUES
+('00000000-0000-0000-0001-000000000001', '00000000-0000-0000-0000-000000000001', 'Front Office', 'FO', 'Reception and guest check-in'),
+('00000000-0000-0000-0001-000000000002', '00000000-0000-0000-0000-000000000001', 'Housekeeping', 'HK', 'Room turnover and linen management'),
+('00000000-0000-0000-0001-000000000003', '00000000-0000-0000-0000-000000000001', 'Food & Beverage', 'FB', 'Kitchen, dining room, and room service'),
+('00000000-0000-0000-0001-000000000004', '00000000-0000-0000-0000-000000000001', 'Maintenance', 'MT', 'Facility operations and repairs')
+ON CONFLICT (id) DO NOTHING;
+
+-- 6. Room Types
+INSERT INTO room_types (id, hotel_id, name, code, description, base_rate, max_occupancy, max_adults, max_children, amenities)
+VALUES
+('00000000-0000-0000-0002-000000000001', '00000000-0000-0000-0000-000000000001', 'Superior Room', 'SUP', 'Spacious room with king bed and city view', 4500.00, 2, 2, 1, '["AC", "WiFi", "TV", "Coffee Maker", "Safe"]'),
+('00000000-0000-0000-0002-000000000002', '00000000-0000-0000-0000-000000000001', 'Deluxe Palace Suite', 'DLX', 'Executive suite with private balcony and marble bath', 7500.00, 3, 2, 2, '["AC", "High-speed WiFi", "Smart TV", "Mini Bar", "Bathtub", "Safe", "Work Desk"]')
+ON CONFLICT (id) DO NOTHING;
+
+-- 7. Rooms
+INSERT INTO rooms (id, hotel_id, room_type_id, number, floor, status, housekeeping_status)
+VALUES
+('00000000-0000-0000-0003-000000000001', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0002-000000000001', '101', 1, 'OCCUPIED', 'CLEAN'),
+('00000000-0000-0000-0003-000000000002', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0002-000000000001', '102', 1, 'AVAILABLE', 'CLEAN'),
+('00000000-0000-0000-0003-000000000003', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0002-000000000002', '105', 1, 'OCCUPIED', 'CLEAN'),
+('00000000-0000-0000-0003-000000000004', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0002-000000000002', '106', 1, 'AVAILABLE', 'DIRTY')
+ON CONFLICT (id) DO NOTHING;
+
+-- 8. Guests
+INSERT INTO guests (id, hotel_id, first_name, last_name, email, phone, id_type, id_number, nationality, vip_status)
+VALUES
+('00000000-0000-0000-0004-000000000001', '00000000-0000-0000-0000-000000000001', 'Arjun', 'Sharma', 'arjun.sharma@email.com', '+91 98765 43210', 'AADHAAR', 'XXXX XXXX 1234', 'Indian', true),
+('00000000-0000-0000-0004-000000000002', '00000000-0000-0000-0000-000000000001', 'Priya', 'Mehta', 'priya.mehta@corp.com', '+91 87654 32109', 'PASSPORT', 'J1234567', 'Indian', false)
+ON CONFLICT (id) DO NOTHING;
+
+-- 9. Reservations
+INSERT INTO reservations (id, hotel_id, guest_id, room_type_id, room_id, status, source, check_in_date, check_out_date, adults, children, nights, rate_per_night, total_amount, tax_amount)
+VALUES
+('00000000-0000-0000-0005-000000000001', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0004-000000000001', '00000000-0000-0000-0002-000000000001', '00000000-0000-0000-0003-000000000001', 'CHECKED_IN', 'DIRECT', CURRENT_DATE - 1, CURRENT_DATE + 1, 2, 0, 2, 4500.00, 9000.00, 1620.00)
+ON CONFLICT (id) DO NOTHING;
+
+-- 10. Folios
+INSERT INTO folios (id, hotel_id, reservation_id, guest_id, status, total_charges, total_payments, outstanding)
+VALUES
+('00000000-0000-0000-0006-000000000001', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0005-000000000001', '00000000-0000-0000-0004-000000000001', 'PARTIAL', 10620.00, 1800.00, 8820.00)
+ON CONFLICT (id) DO NOTHING;
+
+-- 11. Restaurant Menu Categories & Items
+INSERT INTO menu_categories (id, hotel_id, name, sort_order)
+VALUES
+('00000000-0000-0000-0007-000000000001', '00000000-0000-0000-0000-000000000001', 'Starters', 1),
+('00000000-0000-0000-0007-000000000002', '00000000-0000-0000-0000-000000000001', 'Main Course', 2)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO menu_items (id, hotel_id, category_id, name, price, is_veg, is_available, preparation_time_minutes)
+VALUES
+('00000000-0000-0000-0008-000000000001', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0007-000000000001', 'Paneer Tikka', 320.00, true, true, 15),
+('00000000-0000-0000-0008-000000000002', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0007-000000000002', 'Butter Chicken', 480.00, false, true, 25)
+ON CONFLICT (id) DO NOTHING;
+
+-- 12. QR Access Tokens
+INSERT INTO qr_codes (id, hotel_id, room_id, token, url, type, is_active)
+VALUES
+('00000000-0000-0000-0009-000000000001', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0003-000000000001', 'gp-r101-abc123', '/guest/gp-r101-abc123', 'ROOM', true)
+ON CONFLICT (id) DO NOTHING;
+
+-- 13. Platform Feature Flags
+INSERT INTO feature_flags (id, key, name, description, is_enabled, hotel_id)
+VALUES
+(gen_random_uuid(), 'restaurant_module', 'Restaurant & POS Module', 'Menu & orders', true, NULL),
+(gen_random_uuid(), 'room_service', 'In-Room Dining Orders', 'Guest room service', true, NULL),
+(gen_random_uuid(), 'kitchen_display', 'Kitchen Display System', 'Live KDS queue', true, NULL),
+(gen_random_uuid(), 'housekeeping_module', 'Housekeeping Automation', 'Auto cleaning tasks', true, NULL),
+(gen_random_uuid(), 'maintenance_tickets', 'Maintenance Dispatch', 'Repairs & tickets', true, NULL)
+ON CONFLICT (key, hotel_id) DO NOTHING;

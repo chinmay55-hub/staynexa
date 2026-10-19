@@ -1,28 +1,30 @@
-// Auth Context - Demo mode authentication
-import React, { createContext, useContext, useState, useCallback } from 'react';
+// Auth Context - Dual-mode authentication (Supabase Production + Stateful In-Memory Demo)
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import type { UserRole, Profile } from '../types';
 import { DEMO_PROFILES, DEMO_MEMBERSHIPS } from '../data/demo';
+import { supabase, isDemoMode } from '../lib/supabase';
 
 export interface AuthUser {
   id: string;
   email: string;
   full_name: string;
   role: UserRole;
-  hotel_id?: string;    // Active hotel context
+  hotel_id?: string;    // Active hotel context (strictly verified via hotel_memberships)
   avatar_url?: string;
 }
 
 interface AuthContextType {
   user: AuthUser | null;
   isLoading: boolean;
+  isDemo: boolean;
   signIn: (email: string, password: string) => Promise<{ error?: string }>;
-  signOut: () => void;
+  signOut: () => Promise<void>;
   switchHotel: (hotelId: string) => void;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-// Demo credentials map
+// Demo credentials map for offline / demo mode
 const DEMO_CREDENTIALS: Record<string, { password: string; userId: string }> = {
   'admin@staynexa.com':       { password: 'demo123', userId: 'user-super' },
   'vikram@grandpalace.com':   { password: 'demo123', userId: 'user-001' },
@@ -46,25 +48,164 @@ function profileToAuthUser(profile: Profile, hotelId?: string): AuthUser {
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const isDemo = isDemoMode();
+  const [isLoading, setIsLoading] = useState(!isDemo);
   const [user, setUser] = useState<AuthUser | null>(() => {
-    // Check localStorage for persisted demo session
-    try {
-      const stored = localStorage.getItem('staynexa_demo_user');
-      if (stored) return JSON.parse(stored) as AuthUser;
-    } catch {}
+    // In demo mode, restore from localStorage
+    if (isDemo) {
+      try {
+        const stored = localStorage.getItem('staynexa_demo_user');
+        if (stored) return JSON.parse(stored) as AuthUser;
+      } catch {}
+    }
     return null;
   });
-  const [isLoading] = useState(false);
+
+  // Production Supabase session restoration
+  useEffect(() => {
+    if (isDemo || !supabase) {
+      setIsLoading(false);
+      return;
+    }
+
+    let isMounted = true;
+
+    async function loadSession() {
+      try {
+        const { data: { session }, error } = await supabase!.auth.getSession();
+        if (error || !session?.user) {
+          if (isMounted) {
+            setUser(null);
+            setIsLoading(false);
+          }
+          return;
+        }
+
+        // Fetch verified user profile (enforces RLS)
+        const { data: profile, error: profileErr } = await supabase!
+          .from('profiles')
+          .select('*')
+          .eq('user_id', session.user.id)
+          .single();
+
+        if (profileErr || !profile) {
+          console.error('[StayNexa Auth] Profile not found for authenticated user');
+          if (isMounted) {
+            setUser(null);
+            setIsLoading(false);
+          }
+          return;
+        }
+
+        // Fetch verified active hotel membership
+        let hotelId: string | undefined;
+        if (profile.role !== 'SUPER_ADMIN') {
+          const { data: membership } = await supabase!
+            .from('hotel_memberships')
+            .select('hotel_id')
+            .eq('user_id', session.user.id)
+            .eq('is_active', true)
+            .limit(1)
+            .maybeSingle();
+
+          hotelId = membership?.hotel_id;
+        }
+
+        if (isMounted) {
+          setUser({
+            id: session.user.id,
+            email: profile.email || session.user.email!,
+            full_name: profile.full_name || 'Staff Member',
+            role: profile.role as UserRole,
+            hotel_id: hotelId,
+            avatar_url: profile.avatar_url,
+          });
+          setIsLoading(false);
+        }
+      } catch (err) {
+        console.error('[StayNexa Auth] Error checking session:', err);
+        if (isMounted) {
+          setUser(null);
+          setIsLoading(false);
+        }
+      }
+    }
+
+    loadSession();
+
+    // Listen for auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event) => {
+      if (event === 'SIGNED_OUT') {
+        setUser(null);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
+  }, [isDemo]);
 
   const signIn = useCallback(async (email: string, password: string): Promise<{ error?: string }> => {
+    // ─── 1. PRODUCTION SUPABASE AUTH ──────────────────────────────────────────
+    if (!isDemo && supabase) {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
+
+      if (error || !data.user) {
+        // Explicitly return production error. NEVER silently fall back to demo data.
+        return { error: error?.message || 'Authentication failed. Please verify credentials.' };
+      }
+
+      // Fetch user profile from database
+      const { data: profile, error: profileErr } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('user_id', data.user.id)
+        .single();
+
+      if (profileErr || !profile) {
+        return { error: 'Your account is authenticated, but no staff profile is configured for this hotel.' };
+      }
+
+      // Fetch active hotel membership
+      let hotelId: string | undefined;
+      if (profile.role !== 'SUPER_ADMIN') {
+        const { data: membership } = await supabase
+          .from('hotel_memberships')
+          .select('hotel_id')
+          .eq('user_id', data.user.id)
+          .eq('is_active', true)
+          .limit(1)
+          .maybeSingle();
+
+        hotelId = membership?.hotel_id;
+      }
+
+      const authUser: AuthUser = {
+        id: data.user.id,
+        email: profile.email || data.user.email!,
+        full_name: profile.full_name || 'Staff Member',
+        role: profile.role as UserRole,
+        hotel_id: hotelId,
+        avatar_url: profile.avatar_url,
+      };
+
+      setUser(authUser);
+      return {};
+    }
+
+    // ─── 2. DEMO MODE IN-MEMORY AUTH ──────────────────────────────────────────
     const creds = DEMO_CREDENTIALS[email.toLowerCase()];
     if (!creds || creds.password !== password) {
-      return { error: 'Invalid email or password. Use any demo credential.' };
+      return { error: 'Invalid email or password. Use any demo credential (e.g. vikram@grandpalace.com / demo123).' };
     }
 
     const profile = DEMO_PROFILES.find(p => p.user_id === creds.userId);
     if (!profile) {
-      return { error: 'Profile not found.' };
+      return { error: 'Demo profile not found.' };
     }
 
     // Determine hotel context from memberships
@@ -78,22 +219,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(authUser);
     localStorage.setItem('staynexa_demo_user', JSON.stringify(authUser));
     return {};
-  }, []);
+  }, [isDemo]);
 
-  const signOut = useCallback(() => {
+  const signOut = useCallback(async () => {
     setUser(null);
     localStorage.removeItem('staynexa_demo_user');
-  }, []);
+    if (!isDemo && supabase) {
+      try {
+        await supabase.auth.signOut();
+      } catch (err) {
+        console.error('[StayNexa Auth] Error during Supabase signOut:', err);
+      }
+    }
+  }, [isDemo]);
 
   const switchHotel = useCallback((hotelId: string) => {
     if (!user) return;
     const updated = { ...user, hotel_id: hotelId };
     setUser(updated);
-    localStorage.setItem('staynexa_demo_user', JSON.stringify(updated));
-  }, [user]);
+    if (isDemo) {
+      localStorage.setItem('staynexa_demo_user', JSON.stringify(updated));
+    }
+  }, [user, isDemo]);
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, signIn, signOut, switchHotel }}>
+    <AuthContext.Provider value={{ user, isLoading, isDemo, signIn, signOut, switchHotel }}>
       {children}
     </AuthContext.Provider>
   );

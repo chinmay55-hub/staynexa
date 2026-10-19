@@ -11,15 +11,20 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- ─── 1. TENANT CONTEXT HELPER FUNCTIONS ──────────────────────────────────────
 
--- Function to extract authenticated user's hotel_id from JWT or membership
+-- Function to extract authenticated user's hotel_id strictly from verified hotel_memberships
 CREATE OR REPLACE FUNCTION auth_hotel_id()
 RETURNS UUID AS $$
-  SELECT COALESCE(
-    -- Check if explicitly passed in user metadata/claims
-    NULLIF(current_setting('request.jwt.claims', true)::json->>'hotel_id', '')::UUID,
-    -- Or look up primary active hotel membership
-    (SELECT hotel_id FROM hotel_memberships WHERE user_id = auth.uid() AND is_active = true LIMIT 1)
-  );
+  SELECT hotel_id 
+  FROM hotel_memberships 
+  WHERE user_id = auth.uid() 
+    AND is_active = true 
+    AND (
+      -- If a specific hotel was requested via verified JWT claim, match it; otherwise use primary active membership
+      NULLIF(current_setting('request.jwt.claims', true)::json->'app_metadata'->>'hotel_id', '')::UUID IS NULL
+      OR hotel_id = NULLIF(current_setting('request.jwt.claims', true)::json->'app_metadata'->>'hotel_id', '')::UUID
+    )
+  ORDER BY created_at ASC
+  LIMIT 1;
 $$ LANGUAGE sql STABLE SECURITY DEFINER;
 
 -- Function to check if user is Platform Super Admin
@@ -533,12 +538,15 @@ CREATE TABLE IF NOT EXISTS feature_flags (
 
 -- ─── 10. ROW LEVEL SECURITY (RLS) POLICIES ───────────────────────────────────
 
--- Enable RLS on all tenant tables
+-- Enable RLS on all tenant and platform tables
 ALTER TABLE hotels ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hotel_domains ENABLE ROW LEVEL SECURITY;
 ALTER TABLE hotel_branding ENABLE ROW LEVEL SECURITY;
 ALTER TABLE hotel_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE hotel_policies ENABLE ROW LEVEL SECURITY;
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE departments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hotel_memberships ENABLE ROW LEVEL SECURITY;
 ALTER TABLE room_types ENABLE ROW LEVEL SECURITY;
 ALTER TABLE rooms ENABLE ROW LEVEL SECURITY;
 ALTER TABLE guests ENABLE ROW LEVEL SECURITY;
@@ -557,64 +565,186 @@ ALTER TABLE housekeeping_tasks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE maintenance_tickets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE qr_codes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE activity_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE subscriptions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE feature_flags ENABLE ROW LEVEL SECURITY;
 
--- Hotels Policy
+-- 1. Hotels Policy
 CREATE POLICY hotels_isolation_policy ON hotels
+    FOR ALL USING (is_super_admin() OR id = auth_hotel_id());
+
+-- 2. Hotel Domains Policy
+CREATE POLICY hotel_domains_policy ON hotel_domains
+    FOR ALL USING (is_super_admin() OR hotel_id = auth_hotel_id());
+
+-- 3. Hotel Branding Policy (Public read for active portals)
+CREATE POLICY hotel_branding_read ON hotel_branding
+    FOR SELECT USING (true);
+CREATE POLICY hotel_branding_write ON hotel_branding
+    FOR ALL USING (is_super_admin() OR hotel_id = auth_hotel_id());
+
+-- 4. Hotel Settings Policy (Public read for Wi-Fi and general config)
+CREATE POLICY hotel_settings_read ON hotel_settings
+    FOR SELECT USING (true);
+CREATE POLICY hotel_settings_write ON hotel_settings
+    FOR ALL USING (is_super_admin() OR hotel_id = auth_hotel_id());
+
+-- 5. Hotel Policies
+CREATE POLICY hotel_policies_policy ON hotel_policies
+    FOR ALL USING (is_super_admin() OR hotel_id = auth_hotel_id());
+
+-- 6. User Profiles Policy (Self-read, SuperAdmin full access, Same-tenant staff read)
+CREATE POLICY profiles_read_policy ON profiles
+    FOR SELECT USING (
+        is_super_admin() 
+        OR user_id = auth.uid()
+        OR EXISTS (
+            SELECT 1 FROM hotel_memberships hm1
+            JOIN hotel_memberships hm2 ON hm1.hotel_id = hm2.hotel_id
+            WHERE hm1.user_id = auth.uid() AND hm2.user_id = profiles.user_id AND hm1.is_active = true
+        )
+    );
+CREATE POLICY profiles_update_policy ON profiles
+    FOR UPDATE USING (is_super_admin() OR user_id = auth.uid());
+CREATE POLICY profiles_admin_insert ON profiles
+    FOR INSERT WITH CHECK (is_super_admin() OR user_id = auth.uid());
+
+-- 7. Hotel Memberships Policy
+CREATE POLICY memberships_read_policy ON hotel_memberships
+    FOR SELECT USING (is_super_admin() OR user_id = auth.uid() OR hotel_id = auth_hotel_id());
+CREATE POLICY memberships_write_policy ON hotel_memberships
     FOR ALL USING (
-        is_super_admin() OR id = auth_hotel_id()
+        is_super_admin() 
+        OR (hotel_id = auth_hotel_id() AND EXISTS (
+            SELECT 1 FROM profiles WHERE user_id = auth.uid() AND role IN ('HOTEL_ADMIN', 'HOTEL_MANAGER')
+        ))
     );
 
--- Rooms Policy
+-- 8. Departments Policy
+CREATE POLICY departments_isolation_policy ON departments
+    FOR ALL USING (is_super_admin() OR hotel_id = auth_hotel_id());
+
+-- 9. Room Types Policy (Public read for booking/guest info)
+CREATE POLICY room_types_read ON room_types
+    FOR SELECT USING (true);
+CREATE POLICY room_types_write ON room_types
+    FOR ALL USING (is_super_admin() OR hotel_id = auth_hotel_id());
+
+-- 10. Rooms Policy
 CREATE POLICY rooms_isolation_policy ON rooms
-    FOR ALL USING (
-        is_super_admin() OR hotel_id = auth_hotel_id()
-    );
+    FOR ALL USING (is_super_admin() OR hotel_id = auth_hotel_id());
 
--- Reservations Policy
+-- 11. Guests Policy
+CREATE POLICY guests_isolation_policy ON guests
+    FOR ALL USING (is_super_admin() OR hotel_id = auth_hotel_id());
+
+-- 12. Reservations Policy
 CREATE POLICY reservations_isolation_policy ON reservations
-    FOR ALL USING (
-        is_super_admin() OR hotel_id = auth_hotel_id()
-    );
+    FOR ALL USING (is_super_admin() OR hotel_id = auth_hotel_id());
 
--- Folios Policy
+-- 13. Folios Policy
 CREATE POLICY folios_isolation_policy ON folios
-    FOR ALL USING (
-        is_super_admin() OR hotel_id = auth_hotel_id()
-    );
+    FOR ALL USING (is_super_admin() OR hotel_id = auth_hotel_id());
 
--- Payments Policy
+-- 14. Folio Items Policy
+CREATE POLICY folio_items_isolation_policy ON folio_items
+    FOR ALL USING (is_super_admin() OR hotel_id = auth_hotel_id());
+
+-- 15. Payments Policy
 CREATE POLICY payments_isolation_policy ON payments
-    FOR ALL USING (
-        is_super_admin() OR hotel_id = auth_hotel_id()
-    );
+    FOR ALL USING (is_super_admin() OR hotel_id = auth_hotel_id());
 
--- Orders Policy
-CREATE POLICY orders_isolation_policy ON orders
-    FOR ALL USING (
-        is_super_admin() OR hotel_id = auth_hotel_id()
-    );
+-- 16. Invoices Policy
+CREATE POLICY invoices_isolation_policy ON invoices
+    FOR ALL USING (is_super_admin() OR hotel_id = auth_hotel_id());
 
--- Service Requests Policy
+-- 17. Menu Categories (Public read for dining guests)
+CREATE POLICY menu_categories_read ON menu_categories
+    FOR SELECT USING (is_active = true);
+CREATE POLICY menu_categories_write ON menu_categories
+    FOR ALL USING (is_super_admin() OR hotel_id = auth_hotel_id());
+
+-- 18. Menu Items (Public read for dining guests)
+CREATE POLICY menu_items_read ON menu_items
+    FOR SELECT USING (is_available = true);
+CREATE POLICY menu_items_write ON menu_items
+    FOR ALL USING (is_super_admin() OR hotel_id = auth_hotel_id());
+
+-- 19. Orders Policy (Staff manage tenant orders; Guests can insert via portal)
+CREATE POLICY orders_select_policy ON orders
+    FOR SELECT USING (is_super_admin() OR hotel_id = auth_hotel_id());
+CREATE POLICY orders_insert_policy ON orders
+    FOR INSERT WITH CHECK (true);
+CREATE POLICY orders_update_policy ON orders
+    FOR UPDATE USING (is_super_admin() OR hotel_id = auth_hotel_id());
+
+-- 20. Order Items Policy
+CREATE POLICY order_items_policy ON order_items
+    FOR ALL USING (is_super_admin() OR hotel_id = auth_hotel_id());
+
+-- 21. Hotel Services (Public read for guest catalog)
+CREATE POLICY hotel_services_read ON hotel_services
+    FOR SELECT USING (is_available = true);
+CREATE POLICY hotel_services_write ON hotel_services
+    FOR ALL USING (is_super_admin() OR hotel_id = auth_hotel_id());
+
+-- 22. Service Requests Policy
 CREATE POLICY requests_isolation_policy ON service_requests
-    FOR ALL USING (
-        is_super_admin() OR hotel_id = auth_hotel_id()
-    );
+    FOR ALL USING (is_super_admin() OR hotel_id = auth_hotel_id());
+CREATE POLICY requests_insert_policy ON service_requests
+    FOR INSERT WITH CHECK (true);
 
--- Housekeeping Policy
+-- 23. Housekeeping Policy
 CREATE POLICY housekeeping_isolation_policy ON housekeeping_tasks
-    FOR ALL USING (
-        is_super_admin() OR hotel_id = auth_hotel_id()
-    );
+    FOR ALL USING (is_super_admin() OR hotel_id = auth_hotel_id());
 
--- Maintenance Policy
+-- 24. Maintenance Policy
 CREATE POLICY maintenance_isolation_policy ON maintenance_tickets
-    FOR ALL USING (
-        is_super_admin() OR hotel_id = auth_hotel_id()
-    );
+    FOR ALL USING (is_super_admin() OR hotel_id = auth_hotel_id());
 
--- Guest QR Public Read Policy for tokenized guest portals
+-- 25. QR Codes Policy (Public read for active cryptographic tokens)
 CREATE POLICY qr_guest_read ON qr_codes
     FOR SELECT USING (is_active = true);
+CREATE POLICY qr_staff_manage ON qr_codes
+    FOR ALL USING (is_super_admin() OR hotel_id = auth_hotel_id());
+
+-- 26. Activity Logs Policy
+CREATE POLICY activity_logs_policy ON activity_logs
+    FOR ALL USING (is_super_admin() OR hotel_id = auth_hotel_id());
+
+-- 27. Subscriptions Policy
+CREATE POLICY subscriptions_policy ON subscriptions
+    FOR ALL USING (is_super_admin() OR hotel_id = auth_hotel_id());
+
+-- 28. Feature Flags Policy
+CREATE POLICY feature_flags_read ON feature_flags
+    FOR SELECT USING (true);
+CREATE POLICY feature_flags_write ON feature_flags
+    FOR ALL USING (is_super_admin());
+
+-- ─── 11. SUPABASE AUTH USER TRIGGER ──────────────────────────────────────────
+
+-- Automatically create a profile when a new user signs up in auth.users
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.profiles (user_id, email, full_name, role)
+  VALUES (
+    NEW.id,
+    NEW.email,
+    COALESCE(NEW.raw_user_meta_data->>'full_name', split_part(NEW.email, '@', 1)),
+    COALESCE(NEW.raw_app_meta_data->>'role', 'RECEPTION')
+  )
+  ON CONFLICT (user_id) DO UPDATE
+  SET email = EXCLUDED.email;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Trigger definition for auth.users
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
 -- Performance Indexes
 CREATE INDEX IF NOT EXISTS idx_rooms_hotel_id ON rooms(hotel_id);
@@ -623,3 +753,5 @@ CREATE INDEX IF NOT EXISTS idx_reservations_dates ON reservations(check_in_date,
 CREATE INDEX IF NOT EXISTS idx_folios_res_id ON folios(reservation_id);
 CREATE INDEX IF NOT EXISTS idx_orders_hotel_status ON orders(hotel_id, status);
 CREATE INDEX IF NOT EXISTS idx_qr_token ON qr_codes(token);
+CREATE INDEX IF NOT EXISTS idx_memberships_user ON hotel_memberships(user_id);
+CREATE INDEX IF NOT EXISTS idx_memberships_hotel ON hotel_memberships(hotel_id);
