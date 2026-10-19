@@ -13,7 +13,10 @@ import {
   featureFlagService,
   menuService,
   serviceRequestService,
-  notificationService
+  notificationService,
+  saveDemoStore,
+  resetDemoStore,
+  demoDataService
 } from '../services/demoDataService';
 import { audioService } from '../services/audioService';
 import { paymentService } from '../services/paymentService';
@@ -593,4 +596,74 @@ describe('STAYNEXA CORE HOTEL OPERATING SYSTEM TEST SUITE', () => {
       unsubscribe();
     });
   });
+
+  // ─── 9. DATA PERSISTENCE & LOCALSTORAGE ENGINE (DEMO & PRODUCTION) ─────────
+  describe('Data Persistence & LocalStorage Engine', () => {
+    beforeEach(() => {
+      // Setup mock localStorage if window is not defined in test runtime
+      if (typeof window === 'undefined' || !window.localStorage) {
+        const store: Record<string, string> = {};
+        const mockStorage = {
+          getItem: (key: string) => store[key] ?? null,
+          setItem: (key: string, value: string) => { store[key] = String(value); },
+          removeItem: (key: string) => { delete store[key]; },
+          clear: () => { Object.keys(store).forEach(k => delete store[k]); },
+        };
+        (globalThis as any).window = { localStorage: mockStorage };
+        (globalThis as any).localStorage = mockStorage;
+      }
+    });
+
+    it('should persist state to localStorage key staynexa_demo_store on saveDemoStore', () => {
+      saveDemoStore();
+      const raw = window.localStorage.getItem('staynexa_demo_store');
+      expect(raw).not.toBeNull();
+      const parsed = JSON.parse(raw!);
+      expect(Array.isArray(parsed.hotels)).toBe(true);
+      expect(Array.isArray(parsed.rooms)).toBe(true);
+      expect(parsed.rooms.length).toBeGreaterThan(0);
+    });
+
+    it('should write mutations to localStorage when hotel settings or rooms are updated', () => {
+      const hotel = hotelService.getById('hotel-001');
+      expect(hotel).toBeDefined();
+
+      const originalPhone = hotel!.phone;
+      hotelService.update('hotel-001', { phone: '+91-9999988888' });
+
+      const raw = window.localStorage.getItem('staynexa_demo_store');
+      expect(raw).not.toBeNull();
+      const parsed = JSON.parse(raw!);
+      const updatedHotel = parsed.hotels.find((h: any) => h.id === 'hotel-001');
+      expect(updatedHotel?.phone).toBe('+91-9999988888');
+
+      // Revert back
+      hotelService.update('hotel-001', { phone: originalPhone });
+    });
+
+    it('should purge localStorage cache and restore initial seed state on resetDemoStore', () => {
+      // Modify a room status
+      const room = roomService.getAll('hotel-001')[0];
+      roomService.update(room.id, { status: 'MAINTENANCE' });
+      saveDemoStore();
+
+      expect(window.localStorage.getItem('staynexa_demo_store')).not.toBeNull();
+
+      // Reset
+      resetDemoStore();
+
+      expect(window.localStorage.getItem('staynexa_demo_store')).toBeNull();
+      const freshRooms = roomService.getAll('hotel-001');
+      expect(freshRooms.length).toBeGreaterThan(0);
+    });
+
+    it('should provide demoDataService with syncFromSupabase structure', async () => {
+      expect(demoDataService.syncFromSupabase).toBeDefined();
+      expect(typeof demoDataService.syncFromSupabase).toBe('function');
+      // In demo mode or unconfigured supabase, syncFromSupabase returns false gracefully without throwing
+      const result = await demoDataService.syncFromSupabase('hotel-001');
+      expect(typeof result).toBe('boolean');
+    });
+  });
 });
+

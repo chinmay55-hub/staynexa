@@ -3,6 +3,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import type { UserRole, Profile } from '../types';
 import { DEMO_PROFILES, DEMO_MEMBERSHIPS } from '../data/demo';
 import { supabase, isDemoMode } from '../lib/supabase';
+import { demoDataService } from '../services/demoDataService';
 
 export interface AuthUser {
   id: string;
@@ -111,6 +112,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           hotelId = membership?.hotel_id;
         }
 
+        // Hydrate service layer with active PostgreSQL hotel data
+        if (hotelId) {
+          try {
+            await demoDataService.syncFromSupabase(hotelId);
+          } catch (syncErr) {
+            console.warn('[StayNexa Auth] Error syncing hotel data on loadSession:', syncErr);
+          }
+        }
+
         if (isMounted) {
           setUser({
             id: session.user.id,
@@ -193,6 +203,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         avatar_url: profile.avatar_url,
       };
 
+      if (hotelId) {
+        try {
+          await demoDataService.syncFromSupabase(hotelId);
+        } catch (syncErr) {
+          console.warn('[StayNexa Auth] Error syncing hotel data on signIn:', syncErr);
+        }
+      }
+
       setUser(authUser);
       return {};
     }
@@ -233,12 +251,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [isDemo]);
 
-  const switchHotel = useCallback((hotelId: string) => {
+  const switchHotel = useCallback(async (hotelId: string) => {
     if (!user) return;
     const updated = { ...user, hotel_id: hotelId };
     setUser(updated);
     if (isDemo) {
       localStorage.setItem('staynexa_demo_user', JSON.stringify(updated));
+    } else if (supabase) {
+      await demoDataService.syncFromSupabase(hotelId);
     }
   }, [user, isDemo]);
 

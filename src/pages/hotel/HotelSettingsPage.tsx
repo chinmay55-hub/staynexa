@@ -9,18 +9,23 @@ import {
   Eye, 
   EyeOff,
   Building2,
-  Sparkles
+  Sparkles,
+  Database,
+  RotateCcw,
+  HardDrive
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
-import { hotelService } from '../../services/demoDataService';
+import { hotelService, resetDemoStore } from '../../services/demoDataService';
+import { isDemoMode } from '../../lib/supabase';
 import type { Hotel, HotelBranding, HotelSettings } from '../../types';
-import { Card, CardContent, CardHeader, Button, Input } from '../../components/ui';
+import { Card, CardContent, CardHeader, Button, Input, ConfirmModal } from '../../components/ui';
 
 export default function HotelSettingsPage() {
   const { user } = useAuth();
   const hotelId = user?.hotel_id || 'hotel-001';
+  const isDemo = isDemoMode();
 
-  const [activeTab, setActiveTab] = useState<'GENERAL' | 'BRANDING' | 'WIFI' | 'BILLING' | 'POLICIES'>('GENERAL');
+  const [activeTab, setActiveTab] = useState<'GENERAL' | 'BRANDING' | 'WIFI' | 'BILLING' | 'POLICIES' | 'STORAGE'>('GENERAL');
   const [hotel, setHotel] = useState<Hotel>(() => hotelService.getById(hotelId)!);
   const [branding, setBranding] = useState<HotelBranding>(() => hotelService.getBranding(hotelId) || {
     id: 'b-1',
@@ -44,6 +49,8 @@ export default function HotelSettingsPage() {
 
   const [showWifiPass, setShowWifiPass] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [resetSuccess, setResetSuccess] = useState(false);
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
 
   const handleSave = () => {
     hotelService.update(hotelId, hotel);
@@ -51,6 +58,19 @@ export default function HotelSettingsPage() {
     hotelService.updateSettings(hotelId, settings);
     setSaveSuccess(true);
     setTimeout(() => setSaveSuccess(false), 2500);
+  };
+
+  const handleResetDemoData = () => {
+    resetDemoStore();
+    const freshHotel = hotelService.getById(hotelId);
+    if (freshHotel) setHotel(freshHotel);
+    const freshBranding = hotelService.getBranding(hotelId);
+    if (freshBranding) setBranding(freshBranding);
+    const freshSettings = hotelService.getSettings(hotelId);
+    if (freshSettings) setSettings(freshSettings);
+    setIsResetModalOpen(false);
+    setResetSuccess(true);
+    setTimeout(() => setResetSuccess(false), 3000);
   };
 
   return (
@@ -61,10 +81,31 @@ export default function HotelSettingsPage() {
           <h1 className="text-2xl font-display font-bold text-stone-900">Hotel Properties & Configuration</h1>
           <p className="text-stone-500 text-sm">Fine-tune branding, guest Wi-Fi credentials, GST rates, and operating policies.</p>
         </div>
-        <Button variant="primary" onClick={handleSave}>
-          {saveSuccess ? 'Settings Saved!' : 'Save Configuration'}
-        </Button>
+        <div className="flex items-center gap-3">
+          <Button 
+            variant="outline" 
+            onClick={() => setIsResetModalOpen(true)}
+            className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+          >
+            <RotateCcw className="w-4 h-4 mr-1.5" />
+            Reset Demo Data
+          </Button>
+          <Button variant="primary" onClick={handleSave}>
+            {saveSuccess ? 'Settings Saved!' : 'Save Configuration'}
+          </Button>
+        </div>
       </div>
+
+      {/* Success Banners */}
+      {resetSuccess && (
+        <div className="p-4 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-800 text-sm flex items-center justify-between animate-in fade-in">
+          <div className="flex items-center gap-2 font-medium">
+            <Check className="w-4 h-4 text-emerald-600" />
+            Demo data store was successfully reset to default factory seeds!
+          </div>
+          <span className="text-xs text-emerald-600">Cache Cleared</span>
+        </div>
+      )}
 
       {/* Settings Navigation Tabs */}
       <div className="flex flex-wrap gap-2 border-b border-stone-200">
@@ -74,6 +115,7 @@ export default function HotelSettingsPage() {
           { id: 'WIFI', label: 'Guest Wi-Fi', icon: Wifi },
           { id: 'BILLING', label: 'GST & Billing Rates', icon: Receipt },
           { id: 'POLICIES', label: 'Policies & House Rules', icon: FileText },
+          { id: 'STORAGE', label: 'Data & Storage', icon: Database },
         ].map(tab => {
           const Icon = tab.icon;
           return (
@@ -311,6 +353,64 @@ export default function HotelSettingsPage() {
           </CardContent>
         </Card>
       )}
+
+      {activeTab === 'STORAGE' && (
+        <Card className="shadow-xs">
+          <CardHeader 
+            title="Data Persistence & Local Storage Engine" 
+            description="Manage your platform data storage mode, local cached state, and session persistence." 
+          />
+          <CardContent className="space-y-6">
+            <div className="p-4 rounded-xl border border-stone-200 bg-stone-50 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className={`w-3 h-3 rounded-full ${isDemo ? 'bg-amber-500' : 'bg-emerald-500'} animate-pulse`} />
+                  <span className="font-semibold text-stone-900 text-sm">
+                    Current Storage Mode: {isDemo ? 'Demo Mode (LocalStorage Cache)' : 'Production Mode (Supabase PostgreSQL)'}
+                  </span>
+                </div>
+                <span className="text-xs px-2.5 py-1 rounded-full font-bold bg-stone-200 text-stone-700">
+                  {isDemo ? 'staynexa_demo_store' : 'PostgreSQL RLS'}
+                </span>
+              </div>
+              <p className="text-xs text-stone-600 leading-relaxed">
+                {isDemo 
+                  ? 'In Demo Mode, all hotel properties, rooms, reservations, guest requests, and orders are persisted in your browser’s localStorage key (`staynexa_demo_store`). Any changes you make will survive browser refreshes and tab reloads.'
+                  : 'In Production Mode, all data operations are strictly synchronized with your live Supabase database with multi-tenant Row Level Security isolation.'
+                }
+              </p>
+            </div>
+
+            <div className="p-4 rounded-xl border border-red-100 bg-red-50/50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div>
+                <h4 className="font-bold text-sm text-stone-900">Reset Demo Data Cache</h4>
+                <p className="text-xs text-stone-500 mt-0.5">
+                  Clear the <code className="bg-red-100/70 text-red-800 px-1 py-0.5 rounded text-[11px]">staynexa_demo_store</code> key from localStorage and revert all rooms, reservations, menu items, and settings to original factory seed values.
+                </p>
+              </div>
+              <Button 
+                variant="danger" 
+                onClick={() => setIsResetModalOpen(true)}
+              >
+                <RotateCcw className="w-4 h-4 mr-2" />
+                Reset Demo Data
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Confirmation Modal */}
+      <ConfirmModal
+        isOpen={isResetModalOpen}
+        onClose={() => setIsResetModalOpen(false)}
+        onConfirm={handleResetDemoData}
+        title="Reset Demo Data Cache?"
+        message="Are you sure you want to reset all demo data? This will purge localStorage key 'staynexa_demo_store' and restore all hotels, rooms, guests, orders, and reservations back to default seed records. This action cannot be undone."
+        confirmLabel="Yes, Reset Data"
+        cancelLabel="Cancel"
+        variant="danger"
+      />
     </div>
   );
 }

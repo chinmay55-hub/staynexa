@@ -50,9 +50,46 @@ export const supabaseHotelService = {
     return data;
   },
 
+  async create(data: Omit<Hotel, 'id' | 'created_at' | 'updated_at'>): Promise<Hotel> {
+    const client = getClient();
+    const { data: hotel, error } = await client
+      .from('hotels')
+      .insert({
+        ...data,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    return hotel;
+  },
+
   async update(id: string, updates: Partial<Hotel>): Promise<Hotel> {
     const client = getClient();
-    const { data, error } = await client.from('hotels').update(updates).eq('id', id).select().single();
+    const { data, error } = await client.from('hotels').update({ ...updates, updated_at: new Date().toISOString() }).eq('id', id).select().single();
+    if (error) throw error;
+    return data;
+  },
+
+  async updateBranding(hotelId: string, updates: Partial<HotelBranding>): Promise<HotelBranding> {
+    const client = getClient();
+    const { data, error } = await client
+      .from('hotel_branding')
+      .upsert({ hotel_id: hotelId, ...updates, updated_at: new Date().toISOString() }, { onConflict: 'hotel_id' })
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
+  async updateSettings(hotelId: string, updates: Partial<HotelSettings>): Promise<HotelSettings> {
+    const client = getClient();
+    const { data, error } = await client
+      .from('hotel_settings')
+      .upsert({ hotel_id: hotelId, ...updates, updated_at: new Date().toISOString() }, { onConflict: 'hotel_id' })
+      .select()
+      .single();
     if (error) throw error;
     return data;
   },
@@ -75,6 +112,46 @@ export const supabaseRoomService = {
     return data || [];
   },
 
+  async create(data: Omit<Room, 'id'>): Promise<Room> {
+    const client = getClient();
+    const { data: room, error } = await client
+      .from('rooms')
+      .insert({
+        ...data,
+        created_at: new Date().toISOString(),
+      })
+      .select('*, room_type:room_types(*)')
+      .single();
+    if (error) throw error;
+    return room;
+  },
+
+  async update(roomId: string, updates: Partial<Room>): Promise<Room> {
+    const client = getClient();
+    const { data: room, error } = await client
+      .from('rooms')
+      .update(updates)
+      .eq('id', roomId)
+      .select('*, room_type:room_types(*)')
+      .single();
+    if (error) throw error;
+    return room;
+  },
+
+  async createType(data: Omit<RoomType, 'id'>): Promise<RoomType> {
+    const client = getClient();
+    const { data: rt, error } = await client
+      .from('room_types')
+      .insert({
+        ...data,
+        created_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    return rt;
+  },
+
   async updateStatus(roomId: string, status: Room['status'], housekeepingStatus?: Room['housekeeping_status']): Promise<Room> {
     const client = getClient();
     const updates: Partial<Room> = { status };
@@ -82,6 +159,43 @@ export const supabaseRoomService = {
     const { data, error } = await client.from('rooms').update(updates).eq('id', roomId).select().single();
     if (error) throw error;
     return data;
+  },
+};
+
+// ─── Guests ───────────────────────────────────────────────────────────────────
+
+export const supabaseGuestService = {
+  async getAll(hotelId: string): Promise<Guest[]> {
+    const client = getClient();
+    const { data, error } = await client.from('guests').select('*').eq('hotel_id', hotelId).order('first_name');
+    if (error) throw error;
+    return data || [];
+  },
+
+  async create(data: Omit<Guest, 'id' | 'created_at'>): Promise<Guest> {
+    const client = getClient();
+    const { data: guest, error } = await client
+      .from('guests')
+      .insert({
+        ...data,
+        created_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    return guest;
+  },
+
+  async update(id: string, updates: Partial<Guest>): Promise<Guest> {
+    const client = getClient();
+    const { data: guest, error } = await client
+      .from('guests')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) throw error;
+    return guest;
   },
 };
 
@@ -144,11 +258,72 @@ export const supabaseReservationService = {
 
     return res;
   },
+
+  async create(data: Omit<Reservation, 'id' | 'created_at' | 'updated_at'>): Promise<Reservation> {
+    const client = getClient();
+    const { guest, room, room_type, ...cleanData } = data as any;
+    const { data: res, error } = await client
+      .from('reservations')
+      .insert({
+        ...cleanData,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .select('*, guest:guests(*), room:rooms(*), room_type:room_types(*)')
+      .single();
+    if (error) throw error;
+    return res;
+  },
+
+  async update(id: string, updates: Partial<Reservation>): Promise<Reservation> {
+    const client = getClient();
+    const { guest, room, room_type, ...cleanUpdates } = updates as any;
+    const { data: res, error } = await client
+      .from('reservations')
+      .update({
+        ...cleanUpdates,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id)
+      .select('*, guest:guests(*), room:rooms(*), room_type:room_types(*)')
+      .single();
+    if (error) throw error;
+    return res;
+  },
 };
 
 // ─── Folios & Payments ────────────────────────────────────────────────────────
 
 export const supabaseFolioService = {
+  async getAll(hotelId: string): Promise<Folio[]> {
+    const client = getClient();
+    const { data, error } = await client.from('folios').select('*').eq('hotel_id', hotelId).order('created_at', { ascending: false });
+    if (error) throw error;
+    return data || [];
+  },
+
+  async getById(id: string): Promise<Folio | null> {
+    const client = getClient();
+    const { data, error } = await client.from('folios').select('*').eq('id', id).maybeSingle();
+    if (error) throw error;
+    return data;
+  },
+
+  async create(data: Omit<Folio, 'id' | 'created_at' | 'updated_at'>): Promise<Folio> {
+    const client = getClient();
+    const { data: folio, error } = await client
+      .from('folios')
+      .insert({
+        ...data,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    return folio;
+  },
+
   async getByReservation(reservationId: string): Promise<Folio | null> {
     const client = getClient();
     const { data, error } = await client.from('folios').select('*').eq('reservation_id', reservationId).maybeSingle();
@@ -403,3 +578,107 @@ export const supabaseQrService = {
     return data;
   },
 };
+
+// ─── Maintenance Tickets ──────────────────────────────────────────────────────
+
+export const supabaseMaintenanceService = {
+  async getAll(hotelId: string): Promise<MaintenanceTicket[]> {
+    const client = getClient();
+    const { data, error } = await client
+      .from('maintenance_tickets')
+      .select('*, room:rooms(*)')
+      .eq('hotel_id', hotelId)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    return data || [];
+  },
+
+  async create(data: Omit<MaintenanceTicket, 'id' | 'created_at' | 'updated_at'>): Promise<MaintenanceTicket> {
+    const client = getClient();
+    const { room, ...cleanData } = data as any;
+    const { data: ticket, error } = await client
+      .from('maintenance_tickets')
+      .insert({
+        ...cleanData,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .select('*, room:rooms(*)')
+      .single();
+    if (error) throw error;
+    return ticket;
+  },
+
+  async update(id: string, updates: Partial<MaintenanceTicket>): Promise<MaintenanceTicket> {
+    const client = getClient();
+    const { room, ...cleanUpdates } = updates as any;
+    const { data: ticket, error } = await client
+      .from('maintenance_tickets')
+      .update({
+        ...cleanUpdates,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id)
+      .select('*, room:rooms(*)')
+      .single();
+    if (error) throw error;
+    return ticket;
+  },
+};
+
+// ─── Full Hotel State Sync (Production Cache Hydration) ───────────────────────
+
+export const supabaseSyncService = {
+  async fetchHotelData(hotelId: string) {
+    const client = getClient();
+    const [
+      roomsRes,
+      roomTypesRes,
+      guestsRes,
+      reservationsRes,
+      ordersRes,
+      requestsRes,
+      tasksRes,
+      ticketsRes,
+      foliosRes,
+      brandingRes,
+      settingsRes,
+      servicesRes,
+      categoriesRes,
+      itemsRes,
+    ] = await Promise.allSettled([
+      client.from('rooms').select('*, room_type:room_types(*)').eq('hotel_id', hotelId),
+      client.from('room_types').select('*').eq('hotel_id', hotelId),
+      client.from('guests').select('*').eq('hotel_id', hotelId),
+      client.from('reservations').select('*, guest:guests(*), room:rooms(*), room_type:room_types(*)').eq('hotel_id', hotelId),
+      client.from('orders').select('*, items:order_items(*), room:rooms(*), guest:guests(*)').eq('hotel_id', hotelId),
+      client.from('service_requests').select('*, room:rooms(*), guest:guests(*), service:hotel_services(*)').eq('hotel_id', hotelId),
+      client.from('housekeeping_tasks').select('*, room:rooms(*)').eq('hotel_id', hotelId),
+      client.from('maintenance_tickets').select('*, room:rooms(*)').eq('hotel_id', hotelId),
+      client.from('folios').select('*').eq('hotel_id', hotelId),
+      client.from('hotel_branding').select('*').eq('hotel_id', hotelId).maybeSingle(),
+      client.from('hotel_settings').select('*').eq('hotel_id', hotelId).maybeSingle(),
+      client.from('hotel_services').select('*').eq('hotel_id', hotelId),
+      client.from('menu_categories').select('*').eq('hotel_id', hotelId),
+      client.from('menu_items').select('*').eq('hotel_id', hotelId),
+    ]);
+
+    return {
+      rooms: roomsRes.status === 'fulfilled' && roomsRes.value.data ? roomsRes.value.data : undefined,
+      roomTypes: roomTypesRes.status === 'fulfilled' && roomTypesRes.value.data ? roomTypesRes.value.data : undefined,
+      guests: guestsRes.status === 'fulfilled' && guestsRes.value.data ? guestsRes.value.data : undefined,
+      reservations: reservationsRes.status === 'fulfilled' && reservationsRes.value.data ? reservationsRes.value.data : undefined,
+      orders: ordersRes.status === 'fulfilled' && ordersRes.value.data ? ordersRes.value.data : undefined,
+      serviceRequests: requestsRes.status === 'fulfilled' && requestsRes.value.data ? requestsRes.value.data : undefined,
+      housekeepingTasks: tasksRes.status === 'fulfilled' && tasksRes.value.data ? tasksRes.value.data : undefined,
+      maintenanceTickets: ticketsRes.status === 'fulfilled' && ticketsRes.value.data ? ticketsRes.value.data : undefined,
+      folios: foliosRes.status === 'fulfilled' && foliosRes.value.data ? foliosRes.value.data : undefined,
+      branding: brandingRes.status === 'fulfilled' && brandingRes.value.data ? brandingRes.value.data : undefined,
+      settings: settingsRes.status === 'fulfilled' && settingsRes.value.data ? settingsRes.value.data : undefined,
+      services: servicesRes.status === 'fulfilled' && servicesRes.value.data ? servicesRes.value.data : undefined,
+      categories: categoriesRes.status === 'fulfilled' && categoriesRes.value.data ? categoriesRes.value.data : undefined,
+      items: itemsRes.status === 'fulfilled' && itemsRes.value.data ? itemsRes.value.data : undefined,
+    };
+  },
+};
+
