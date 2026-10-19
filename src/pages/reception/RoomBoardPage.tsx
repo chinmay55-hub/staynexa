@@ -23,6 +23,7 @@ import {
   activityLogService
 } from '../../services/demoDataService';
 import type { Room, RoomStatus, HousekeepingStatus, Reservation, Folio } from '../../types';
+import { QuickCheckInModal } from '../../components/reception/QuickCheckInModal';
 import { 
   Card, 
   CardContent, 
@@ -39,7 +40,7 @@ export default function RoomBoardPage() {
   const hotelId = user?.hotel_id || 'hotel-001';
 
   const [rooms, setRooms] = useState(() => roomService.getAll(hotelId));
-  const [reservations] = useState(() => reservationService.getAll(hotelId));
+  const [reservations, setReservations] = useState(() => reservationService.getAll(hotelId));
   const [maintenanceTickets] = useState(() => maintenanceService.getAll(hotelId));
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [hkFilter, setHkFilter] = useState<string>('ALL');
@@ -48,6 +49,7 @@ export default function RoomBoardPage() {
   // Detail Modal state
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [checkInRoomId, setCheckInRoomId] = useState<string | null>(null);
 
   const activeReservations = reservations.filter(r => r.status === 'CHECKED_IN');
 
@@ -183,6 +185,7 @@ export default function RoomBoardPage() {
                       activeReservation={activeReservations.find(r => r.room_id === room.id)}
                       hasMaintenance={maintenanceTickets.some(m => m.room_id === room.id && m.status !== 'CLOSED')}
                       onClick={() => handleOpenRoom(room)}
+                      onQuickCheckIn={(id) => setCheckInRoomId(id)}
                     />
                   ))}
                 </div>
@@ -199,6 +202,7 @@ export default function RoomBoardPage() {
               activeReservation={activeReservations.find(r => r.room_id === room.id)}
               hasMaintenance={maintenanceTickets.some(m => m.room_id === room.id && m.status !== 'CLOSED')}
               onClick={() => handleOpenRoom(room)}
+              onQuickCheckIn={(id) => setCheckInRoomId(id)}
             />
           ))}
         </div>
@@ -229,6 +233,27 @@ export default function RoomBoardPage() {
                 <HousekeepingBadge status={selectedRoom.housekeeping_status} />
               </div>
             </div>
+
+            {/* Express Check-In Card for Available Rooms */}
+            {selectedRoom.status === 'AVAILABLE' && (
+              <div className="p-3.5 rounded-xl border border-[#c9a84c]/40 bg-[#c9a84c]/10 flex items-center justify-between gap-3">
+                <div>
+                  <span className="text-xs font-bold text-stone-900 block">Vacant & Clean Room</span>
+                  <span className="text-[11px] text-stone-600">Instantly allocate an arriving guest or register a walk-in</span>
+                </div>
+                <Button 
+                  variant="primary" 
+                  size="sm"
+                  onClick={() => {
+                    setIsModalOpen(false);
+                    setCheckInRoomId(selectedRoom.id);
+                  }}
+                  className="shrink-0"
+                >
+                  ⚡ Express Check-In
+                </Button>
+              </div>
+            )}
 
             {/* Current Guest info if occupied */}
             {currentReservation ? (
@@ -326,6 +351,21 @@ export default function RoomBoardPage() {
           </div>
         </Modal>
       )}
+
+      {/* 3-Step Express Check-In Modal */}
+      {checkInRoomId && (
+        <QuickCheckInModal
+          isOpen={true}
+          preselectedRoomId={checkInRoomId}
+          hotelId={hotelId}
+          onClose={() => setCheckInRoomId(null)}
+          onSuccess={() => {
+            setRooms([...roomService.getAll(hotelId)]);
+            setReservations([...reservationService.getAll(hotelId)]);
+            setCheckInRoomId(null);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -335,12 +375,14 @@ function RoomCard({
   room, 
   activeReservation, 
   hasMaintenance, 
-  onClick 
+  onClick,
+  onQuickCheckIn,
 }: { 
   room: Room; 
   activeReservation?: Reservation; 
-  hasMaintenance?: boolean;
+  hasMaintenance?: boolean; 
   onClick: () => void; 
+  onQuickCheckIn?: (roomId: string) => void;
 }) {
   // Border color based on status
   const getCardStyle = () => {
@@ -384,11 +426,22 @@ function RoomCard({
 
       <div className="mt-3 pt-2 border-t border-stone-100 flex items-center justify-between text-[11px]">
         <HousekeepingBadge status={room.housekeeping_status} />
-        {activeReservation?.guest && (
+        {room.status === 'AVAILABLE' && onQuickCheckIn ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onQuickCheckIn(room.id);
+            }}
+            className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white transition-colors shadow-2xs cursor-pointer"
+          >
+            + Check-In
+          </button>
+        ) : activeReservation?.guest ? (
           <span className="text-[10px] text-stone-600 font-semibold truncate max-w-[80px]">
             {activeReservation.guest.last_name}
           </span>
-        )}
+        ) : null}
       </div>
     </div>
   );

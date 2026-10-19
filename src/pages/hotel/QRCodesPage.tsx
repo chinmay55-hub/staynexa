@@ -78,6 +78,17 @@ export default function QRCodesPage() {
     setQrCodes([...qrService.getAll(hotelId)]);
   };
 
+  const handleDownloadPng = (qr: QRCodeType) => {
+    if (!qrDataUrl) return;
+    const roomNum = qr.room?.number || qr.room_id || 'room';
+    const link = document.createElement('a');
+    link.href = qrDataUrl;
+    link.download = `StayNexa-QR-Room-${roomNum}.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
       {/* Header */}
@@ -212,19 +223,52 @@ export default function QRCodesPage() {
           title={`Digital Standee Preview: Room ${previewQr.room?.number || ''}`}
           size="sm"
           footer={
-            <div className="flex justify-between w-full">
+            <div className="flex justify-between items-center w-full gap-2">
               <Button variant="outline" onClick={() => setPreviewQr(null)}>Close</Button>
-              <Button 
-                variant="primary" 
-                onClick={() => window.print()}
-                iconLeft={<Printer className="w-4 h-4" />}
-              >
-                Print Standee
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => handleDownloadPng(previewQr)}
+                  iconLeft={<Download className="w-4 h-4" />}
+                >
+                  Download PNG
+                </Button>
+                <Button 
+                  variant="primary" 
+                  onClick={() => window.print()}
+                  iconLeft={<Printer className="w-4 h-4" />}
+                >
+                  Print Standee
+                </Button>
+              </div>
             </div>
           }
         >
-          <div className="p-6 bg-white border border-stone-200 rounded-2xl text-center space-y-4">
+          {/* Print CSS rule injection for single standee */}
+          <style>{`
+            @media print {
+              body * {
+                visibility: hidden !important;
+              }
+              #single-qr-standee-print, #single-qr-standee-print * {
+                visibility: visible !important;
+              }
+              #single-qr-standee-print {
+                position: absolute !important;
+                left: 0 !important;
+                top: 0 !important;
+                width: 100% !important;
+                max-width: 380px !important;
+                margin: 40px auto !important;
+                padding: 24px !important;
+                border: 2px dashed #999 !important;
+                background: white !important;
+                color: black !important;
+              }
+            }
+          `}</style>
+
+          <div id="single-qr-standee-print" className="p-6 bg-white border border-stone-200 rounded-2xl text-center space-y-4">
             <div>
               <h3 className="font-display font-bold text-lg text-stone-900">{hotel?.name}</h3>
               <div className="inline-block px-3 py-1 bg-[#1a2744] text-[#c9a84c] rounded-full text-xs font-bold mt-1">

@@ -183,6 +183,11 @@ function AppRoutes() {
         <Route path="all" element={<MaintenancePage />} />
       </Route>
 
+      {/* Route Aliases */}
+      <Route path="/admin" element={<Navigate to="/hotel/dashboard" replace />} />
+      <Route path="/admin/qrcodes" element={<Navigate to="/hotel/qr-codes" replace />} />
+      <Route path="/admin/*" element={<Navigate to="/hotel/dashboard" replace />} />
+
       {/* Catch all */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

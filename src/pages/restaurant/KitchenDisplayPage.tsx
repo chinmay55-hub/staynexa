@@ -465,6 +465,30 @@ export default function KitchenDisplayPage() {
               </div>
             </div>
 
+            {/* Print CSS rule isolation for thermal POS */}
+            <style>{`
+              @media print {
+                body * {
+                  visibility: hidden !important;
+                }
+                #kot-receipt-print, #kot-receipt-print * {
+                  visibility: visible !important;
+                }
+                #kot-receipt-print {
+                  position: absolute !important;
+                  left: 0 !important;
+                  top: 0 !important;
+                  width: ${thermalWidth === '80mm' ? '76mm' : '54mm'} !important;
+                  margin: 0 !important;
+                  padding: 8px !important;
+                  border: none !important;
+                  box-shadow: none !important;
+                  background: white !important;
+                  color: black !important;
+                }
+              }
+            `}</style>
+
             {/* Thermal Slip Preview Canvas */}
             <div className="flex-1 p-6 overflow-y-auto bg-stone-900 flex justify-center">
               <div 

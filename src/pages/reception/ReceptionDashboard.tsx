@@ -26,6 +26,8 @@ import {
   hotelService 
 } from '../../services/demoDataService';
 import { realtimeSync } from '../../services/realtimeSync';
+import type { Reservation } from '../../types';
+import { QuickCheckInModal } from '../../components/reception/QuickCheckInModal';
 import { 
   Card, 
   CardContent, 
@@ -50,6 +52,7 @@ export default function ReceptionDashboard() {
   const [recentRequests, setRecentRequests] = useState(() => serviceRequestService.getAll(hotelId).slice(0, 5));
   const [activeOrders, setActiveOrders] = useState(() => orderService.getActive(hotelId).slice(0, 5));
   const [deskAlert, setDeskAlert] = useState<{ id: string; title: string; subtitle: string; type: 'ORDER' | 'REQUEST' } | null>(null);
+  const [checkInReservation, setCheckInReservation] = useState<Reservation | null>(null);
 
   // Realtime WebSocket & Cross-Tab State Synchronization
   useEffect(() => {
@@ -278,7 +281,7 @@ export default function ReceptionDashboard() {
                     <Button 
                       variant="primary" 
                       size="sm"
-                      onClick={() => navigate('/reception/reservations')}
+                      onClick={() => setCheckInReservation(res)}
                     >
                       Process Check-In
                     </Button>
@@ -419,6 +422,20 @@ export default function ReceptionDashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* 3-Step Quick Check-In Command Modal */}
+      {checkInReservation && (
+        <QuickCheckInModal
+          isOpen={true}
+          reservation={checkInReservation}
+          hotelId={hotelId}
+          onClose={() => setCheckInReservation(null)}
+          onSuccess={() => {
+            setArrivals(reservationService.getTodayArrivals(hotelId));
+            setStats(analyticsService.getHotelStats(hotelId));
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -481,7 +481,30 @@ export default function FoliosPage() {
             </div>
           }
         >
-          <div className="p-6 bg-white border border-stone-200 rounded-xl space-y-6 text-stone-900 print:border-none">
+          {/* Print CSS rule isolation */}
+          <style>{`
+            @media print {
+              body * {
+                visibility: hidden !important;
+              }
+              #tax-invoice-print, #tax-invoice-print * {
+                visibility: visible !important;
+              }
+              #tax-invoice-print {
+                position: absolute !important;
+                left: 0 !important;
+                top: 0 !important;
+                width: 100% !important;
+                margin: 0 !important;
+                padding: 24px !important;
+                border: none !important;
+                box-shadow: none !important;
+                background: white !important;
+                color: black !important;
+              }
+            }
+          `}</style>
+          <div id="tax-invoice-print" className="p-6 bg-white border border-stone-200 rounded-xl space-y-6 text-stone-900 print:border-none">
             {/* Letterhead */}
             <div className="flex justify-between items-start border-b border-stone-200 pb-4">
               <div>

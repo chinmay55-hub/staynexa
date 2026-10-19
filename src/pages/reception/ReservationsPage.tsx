@@ -13,7 +13,8 @@ import {
   IndianRupee, 
   Clock,
   Building2,
-  AlertCircle
+  AlertCircle,
+  CheckCircle2
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { 
@@ -29,8 +30,10 @@ import type {
   ReservationStatus, 
   BookingSource, 
   Room, 
-  Guest 
+  Guest,
+  PaymentMethod
 } from '../../types';
+import { QuickCheckInModal } from '../../components/reception/QuickCheckInModal';
 import { 
   Card, 
   CardContent, 
@@ -57,10 +60,12 @@ export default function ReservationsPage() {
 
   // Check-in modal state
   const [checkInRes, setCheckInRes] = useState<Reservation | null>(null);
-  const [selectedRoomId, setSelectedRoomId] = useState<string>('');
 
   // Check-out modal state
   const [checkOutRes, setCheckOutRes] = useState<Reservation | null>(null);
+  const [settlementMethod, setSettlementMethod] = useState<PaymentMethod>('UPI');
+  const [isCityLedgerOverride, setIsCityLedgerOverride] = useState(false);
+  const [corporateAccountName, setCorporateAccountName] = useState('');
 
   // New Reservation modal state
   const [isNewResOpen, setIsNewResOpen] = useState(false);
@@ -105,28 +110,50 @@ export default function ReservationsPage() {
     return Math.max(1, Math.ceil(diff / (1000 * 60 * 60 * 24)));
   };
 
-  // Handle Check-in submission
-  const handleConfirmCheckIn = () => {
-    if (!checkInRes || !selectedRoomId) return;
-    reservationService.checkIn(checkInRes.id, selectedRoomId);
-    setReservations([...reservationService.getAll(hotelId)]);
-    setRooms([...roomService.getAll(hotelId)]);
-    activityLogService.log({
-      hotel_id: hotelId,
-      user_id: user?.id,
-      actor_name: user?.full_name,
-      action: 'CHECK_IN',
-      entity_type: 'reservation',
-      entity_id: checkInRes.id,
-      metadata: { guest: `${checkInRes.guest?.first_name} ${checkInRes.guest?.last_name}`, room_id: selectedRoomId }
-    });
-    setCheckInRes(null);
-    setSelectedRoomId('');
-  };
 
-  // Handle Checkout submission
+  // Handle Checkout submission with Folio Balance Enforcement & City Ledger Override
   const handleConfirmCheckout = () => {
     if (!checkOutRes) return;
+    const folio = folioService.getByReservation(checkOutRes.id);
+    const outstanding = folio ? Math.max(0, folio.outstanding) : 0;
+
+    if (outstanding > 0) {
+      if (isCityLedgerOverride) {
+        if (!corporateAccountName.trim()) return;
+        if (folio) {
+          folioService.addItem({
+            hotel_id: hotelId,
+            folio_id: folio.id,
+            description: `Transferred to Corporate AR (City Ledger): ${corporateAccountName}`,
+            category: 'SERVICE',
+            quantity: 1,
+            unit_price: 0,
+            tax_percent: 0,
+            tax_amount: 0,
+            discount_amount: 0,
+            total: 0,
+            posted_at: new Date().toISOString(),
+            posted_by: user?.full_name || 'Front Desk',
+          });
+        }
+      } else {
+        // Collect payment to settle zero balance
+        if (folio) {
+          folioService.addPayment({
+            hotel_id: hotelId,
+            folio_id: folio.id,
+            guest_id: checkOutRes.guest_id,
+            reservation_id: checkOutRes.id,
+            amount: outstanding,
+            method: settlementMethod,
+            reference: `SETTLE-${Date.now().toString().slice(-6)}`,
+            notes: `Full checkout settlement (${settlementMethod})`,
+            received_by: user?.full_name || 'Front Desk',
+          });
+        }
+      }
+    }
+
     reservationService.checkOut(checkOutRes.id);
     setReservations([...reservationService.getAll(hotelId)]);
     setRooms([...roomService.getAll(hotelId)]);
@@ -137,9 +164,15 @@ export default function ReservationsPage() {
       action: 'CHECK_OUT',
       entity_type: 'reservation',
       entity_id: checkOutRes.id,
-      metadata: { guest: `${checkOutRes.guest?.first_name} ${checkOutRes.guest?.last_name}` }
+      metadata: { 
+        guest: `${checkOutRes.guest?.first_name} ${checkOutRes.guest?.last_name}`,
+        city_ledger: isCityLedgerOverride ? corporateAccountName : null,
+        settled_amount: isCityLedgerOverride ? 0 : outstanding,
+      }
     });
     setCheckOutRes(null);
+    setIsCityLedgerOverride(false);
+    setCorporateAccountName('');
   };
 
   // Handle New Reservation submission
@@ -191,11 +224,6 @@ export default function ReservationsPage() {
     setReservations([...reservationService.getAll(hotelId)]);
     setIsNewResOpen(false);
   };
-
-  // Rooms available for the selected check-in room type
-  const availableRoomsForCheckIn = checkInRes 
-    ? rooms.filter(r => r.status === 'AVAILABLE' && r.room_type_id === checkInRes.room_type_id)
-    : [];
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
@@ -319,7 +347,6 @@ export default function ReservationsPage() {
                           iconLeft={<LogIn className="w-3.5 h-3.5" />}
                           onClick={() => {
                             setCheckInRes(res);
-                            setSelectedRoomId(res.room_id || '');
                           }}
                         >
                           Check In
@@ -344,105 +371,154 @@ export default function ReservationsPage() {
         </CardContent>
       </Card>
 
-      {/* Check-In Modal */}
+      {/* 3-Step Express Check-In Modal */}
       {checkInRes && (
-        <Modal
+        <QuickCheckInModal
           isOpen={true}
+          reservation={checkInRes}
+          hotelId={hotelId}
           onClose={() => setCheckInRes(null)}
-          title="Guest Check-In Procedure"
-          size="md"
-          footer={
-            <div className="flex justify-end gap-2 w-full">
-              <Button variant="outline" onClick={() => setCheckInRes(null)}>Cancel</Button>
-              <Button 
-                variant="primary" 
-                onClick={handleConfirmCheckIn}
-                disabled={!selectedRoomId}
-              >
-                Confirm & Assign Room
-              </Button>
-            </div>
-          }
-        >
-          <div className="space-y-4">
-            <div className="p-4 rounded-xl bg-stone-50 border border-stone-200 text-sm space-y-1">
-              <div className="font-bold text-stone-900 text-base">
-                {checkInRes.guest?.first_name} {checkInRes.guest?.last_name}
-              </div>
-              <div className="text-xs text-stone-600">Phone: {checkInRes.guest?.phone} · Email: {checkInRes.guest?.email || 'N/A'}</div>
-              <div className="text-xs text-stone-600">ID: {checkInRes.guest?.id_type || 'Aadhaar'} ({checkInRes.guest?.id_number || 'Verified at desk'})</div>
-            </div>
+          onSuccess={() => {
+            setReservations([...reservationService.getAll(hotelId)]);
+            setRooms([...roomService.getAll(hotelId)]);
+            setCheckInRes(null);
+          }}
+        />
+      )}
 
-            <div>
-              <label className="block text-sm font-semibold text-stone-800 mb-1.5">
-                Assign Room ({checkInRes.room_type?.name})
-              </label>
-              <Select
-                value={selectedRoomId}
-                onChange={e => setSelectedRoomId(e.target.value)}
-                options={[
-                  { value: '', label: 'Select an available clean room...' },
-                  ...availableRoomsForCheckIn.map(r => ({
-                    value: r.id,
-                    label: `Room ${r.number} (Floor ${r.floor}) - ${r.housekeeping_status}`
-                  }))
-                ]}
-              />
-              {availableRoomsForCheckIn.length === 0 && (
-                <p className="text-xs text-rose-600 mt-1 flex items-center gap-1">
-                  <AlertCircle className="w-3.5 h-3.5" />
-                  No available clean rooms of this type currently. Check housekeeping status!
-                </p>
+      {/* Check-Out Modal with Zero-Balance Enforcement & City Ledger */}
+      {checkOutRes && (() => {
+        const checkOutFolio = folioService.getByReservation(checkOutRes.id);
+        const outstandingBalance = checkOutFolio ? Math.max(0, checkOutFolio.outstanding) : 0;
+        const totalCharges = checkOutFolio?.total_charges ?? checkOutRes.total_amount;
+        const totalPayments = checkOutFolio?.total_payments ?? (checkOutRes.deposit_amount || 0);
+
+        return (
+          <Modal
+            isOpen={true}
+            onClose={() => setCheckOutRes(null)}
+            title="Guest Checkout & Room Settlement"
+            size="md"
+            footer={
+              <div className="flex justify-end gap-2 w-full">
+                <Button variant="outline" onClick={() => setCheckOutRes(null)}>Back</Button>
+                {outstandingBalance > 0 && !isCityLedgerOverride ? (
+                  <Button 
+                    variant="primary" 
+                    onClick={handleConfirmCheckout}
+                    className="bg-emerald-700 hover:bg-emerald-800 text-white"
+                  >
+                    Collect ₹{outstandingBalance.toLocaleString('en-IN')} & Checkout
+                  </Button>
+                ) : (
+                  <Button 
+                    variant="danger" 
+                    onClick={handleConfirmCheckout}
+                    disabled={outstandingBalance > 0 && isCityLedgerOverride && !corporateAccountName.trim()}
+                  >
+                    {isCityLedgerOverride ? 'Authorize City Ledger & Checkout' : 'Complete Checkout'}
+                  </Button>
+                )}
+              </div>
+            }
+          >
+            <div className="space-y-4">
+              <div className="p-4 rounded-xl bg-stone-50 border border-stone-200 text-sm space-y-1">
+                <div className="font-bold text-stone-900">
+                  {checkOutRes.guest?.first_name} {checkOutRes.guest?.last_name}
+                </div>
+                <div className="text-xs text-stone-600">Room {checkOutRes.room?.number} · {checkOutRes.nights} Nights Stay</div>
+              </div>
+
+              {/* Folio Ledger Statement */}
+              <div className="p-3.5 rounded-xl border border-stone-200 space-y-2 text-xs">
+                <div className="font-bold uppercase tracking-wider text-stone-700">Folio Balance Audit</div>
+                <div className="flex justify-between text-stone-600">
+                  <span>Total Charges (Room & F&B):</span>
+                  <span className="font-semibold text-stone-900">₹{totalCharges.toLocaleString('en-IN')}</span>
+                </div>
+                <div className="flex justify-between text-stone-600">
+                  <span>Total Payments & Deposits:</span>
+                  <span className="font-semibold text-emerald-700">₹{totalPayments.toLocaleString('en-IN')}</span>
+                </div>
+                <div className="flex justify-between pt-1 border-t border-stone-100 font-bold">
+                  <span>Outstanding Balance:</span>
+                  <span className={outstandingBalance > 0 ? 'text-rose-600 font-extrabold text-sm' : 'text-emerald-700 font-extrabold text-sm'}>
+                    ₹{outstandingBalance.toLocaleString('en-IN')}
+                  </span>
+                </div>
+              </div>
+
+              {/* Unsettled Balance Warning & Enforcement */}
+              {outstandingBalance > 0 ? (
+                <div className="space-y-3">
+                  <div className="p-3 rounded-xl border border-rose-200 bg-rose-50 text-rose-900 text-xs space-y-1">
+                    <span className="font-bold block">Folio Balance Settlement Required</span>
+                    <p className="text-[11px] text-rose-800">
+                      Standard hotel policy enforces zero-balance payment collection before releasing Room {checkOutRes.room?.number}.
+                    </p>
+                  </div>
+
+                  {/* Option 1: Collect Payment Now */}
+                  {!isCityLedgerOverride && (
+                    <div className="p-3.5 rounded-xl border border-stone-200 bg-stone-50 space-y-2">
+                      <span className="text-xs font-bold text-stone-900 block">Collect Settlement Payment</span>
+                      <Select
+                        label="Payment Method"
+                        value={settlementMethod}
+                        onChange={e => setSettlementMethod(e.target.value as PaymentMethod)}
+                        options={[
+                          { value: 'UPI', label: 'UPI (GPay / PhonePe / QR)' },
+                          { value: 'CARD', label: 'Credit / Debit Card (POS Machine)' },
+                          { value: 'CASH', label: 'Cash Currency Collection' },
+                          { value: 'BANK_TRANSFER', label: 'Bank Transfer / NEFT' },
+                        ]}
+                      />
+                    </div>
+                  )}
+
+                  {/* Option 2: Corporate City Ledger Override */}
+                  <div className="p-3 rounded-xl border border-amber-200 bg-amber-50/70 space-y-2">
+                    <label className="flex items-center justify-between cursor-pointer">
+                      <div>
+                        <span className="text-xs font-bold text-stone-900 block">Bill to Corporate Account (City Ledger)</span>
+                        <span className="text-[11px] text-stone-600">Transfer balance to company AR instead of desk payment</span>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={isCityLedgerOverride}
+                        onChange={e => setIsCityLedgerOverride(e.target.checked)}
+                        className="w-4 h-4 accent-[#c9a84c] rounded"
+                      />
+                    </label>
+
+                    {isCityLedgerOverride && (
+                      <div className="pt-2">
+                        <Input
+                          label="Company / Corporate Entity Name *"
+                          placeholder="e.g. Tata Consultancy Services Ltd"
+                          required
+                          value={corporateAccountName}
+                          onChange={e => setCorporateAccountName(e.target.value)}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-800 text-xs flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>Account is fully settled (₹0.00 outstanding). Ready for key return.</span>
+                </div>
               )}
-            </div>
 
-            <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-100 text-xs text-emerald-800">
-              ✓ Confirming check-in will automatically open an active folio ledger and mark the assigned room as OCCUPIED.
+              <p className="text-xs text-stone-500">
+                Completing checkout will release Room {checkOutRes.room?.number} and automatically transition its housekeeping state to <strong className="text-amber-800">DIRTY</strong> for cleaning turnaround.
+              </p>
             </div>
-          </div>
-        </Modal>
-      )}
-
-      {/* Check-Out Modal */}
-      {checkOutRes && (
-        <Modal
-          isOpen={true}
-          onClose={() => setCheckOutRes(null)}
-          title="Guest Checkout & Room Release"
-          size="md"
-          footer={
-            <div className="flex justify-end gap-2 w-full">
-              <Button variant="outline" onClick={() => setCheckOutRes(null)}>Back</Button>
-              <Button variant="danger" onClick={handleConfirmCheckout}>Complete Checkout</Button>
-            </div>
-          }
-        >
-          <div className="space-y-4">
-            <div className="p-4 rounded-xl bg-stone-50 border border-stone-200 text-sm space-y-1">
-              <div className="font-bold text-stone-900">
-                {checkOutRes.guest?.first_name} {checkOutRes.guest?.last_name}
-              </div>
-              <div className="text-xs text-stone-600">Room {checkOutRes.room?.number} · {checkOutRes.nights} Nights</div>
-            </div>
-
-            <div className="p-3.5 rounded-xl border border-stone-200 space-y-2 text-xs">
-              <div className="font-bold uppercase tracking-wider text-stone-700">Folio Verification</div>
-              <div className="flex justify-between">
-                <span>Total Stay Charges:</span>
-                <span className="font-semibold text-stone-900">₹{checkOutRes.total_amount}</span>
-              </div>
-              <div className="flex justify-between text-emerald-700 font-semibold">
-                <span>Account Status:</span>
-                <span>Ready for Settlement</span>
-              </div>
-            </div>
-
-            <p className="text-xs text-stone-500">
-              Completing checkout will release Room {checkOutRes.room?.number} and automatically transition its housekeeping state to <strong className="text-amber-800">DIRTY</strong> for cleaning turnaround.
-            </p>
-          </div>
-        </Modal>
-      )}
+          </Modal>
+        );
+      })()}
 
       {/* New Reservation Modal */}
       <Modal
