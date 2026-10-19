@@ -282,6 +282,7 @@ export const reservationService = {
 // ─── Folio / Payments ─────────────────────────────────────────────────────────
 
 export const folioService = {
+  getAll: (hotelId?: string): Folio[] => (hotelId ? folios.filter(f => f.hotel_id === hotelId) : folios),
   getByReservation: (reservationId: string): Folio | undefined => folios.find(f => f.reservation_id === reservationId),
   getById: (id: string): Folio | undefined => folios.find(f => f.id === id),
   getItems: (folioId: string): FolioItem[] => folioItems.filter(fi => fi.folio_id === folioId),

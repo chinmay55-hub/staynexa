@@ -66,6 +66,7 @@ export interface HotelSettings {
   allow_room_charge: boolean;
   require_deposit: boolean;
   deposit_percent: number;
+  google_review_url?: string;
 }
 
 export interface Profile {

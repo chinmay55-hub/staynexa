@@ -25,13 +25,11 @@ import type {
   FolioItem, 
   Payment, 
   PaymentMethod,
-  Reservation,
-  Guest 
+  Reservation
 } from '../../types';
 import { 
   Card, 
   CardContent, 
-  CardHeader, 
   Button, 
   Input, 
   Select, 
@@ -54,6 +52,8 @@ export default function FoliosPage() {
   const [isAddChargeOpen, setIsAddChargeOpen] = useState(false);
   const [isRecordPaymentOpen, setIsRecordPaymentOpen] = useState(false);
   const [isInvoiceOpen, setIsInvoiceOpen] = useState(false);
+  const [invoiceNumber] = useState(() => `INV-${Math.floor(100000 + Math.random() * 900000)}`);
+  const [invoiceDate] = useState(() => new Date().toLocaleDateString('en-IN'));
 
   // Form states
   const [chargeForm, setChargeForm] = useState({
@@ -492,8 +492,8 @@ export default function FoliosPage() {
               </div>
               <div className="text-right">
                 <span className="text-xs font-bold uppercase tracking-wider text-[#c9a84c]">TAX INVOICE</span>
-                <div className="text-base font-bold font-mono mt-1">INV-{Date.now().toString().slice(-6)}</div>
-                <div className="text-xs text-stone-500">Date: {new Date().toLocaleDateString('en-IN')}</div>
+                <div className="text-base font-bold font-mono mt-1">{invoiceNumber}</div>
+                <div className="text-xs text-stone-500">Date: {invoiceDate}</div>
               </div>
             </div>
 

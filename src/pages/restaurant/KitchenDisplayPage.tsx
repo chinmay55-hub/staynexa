@@ -4,19 +4,21 @@ import {
   ChefHat, 
   Clock, 
   RefreshCw, 
-  Check, 
-  AlertCircle, 
   CheckCircle2, 
   Flame, 
-  BellRing,
-  ArrowRight,
-  LogOut,
-  ArrowLeft,
-  ChevronDown,
-  UserCheck
+  ArrowRight, 
+  LogOut, 
+  ArrowLeft, 
+  ChevronDown, 
+  UserCheck,
+  Volume2,
+  VolumeX,
+  Printer,
+  X
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { orderService, hotelService } from '../../services/demoDataService';
+import { audioService } from '../../services/audioService';
 import type { Order, OrderStatus } from '../../types';
 import { Button } from '../../components/ui';
 
@@ -29,7 +31,15 @@ export default function KitchenDisplayPage() {
   const hotel = hotelService.getById(hotelId);
 
   const [orders, setOrders] = useState<Order[]>(() => orderService.getAll(hotelId));
-  const [currentTime, setCurrentTime] = useState(new Date());
+  const [currentTime, setCurrentTime] = useState(() => new Date());
+
+  // KDS Sound State
+  const [isMuted, setIsMuted] = useState(() => audioService.isAudioMuted());
+  const [isUnlocked, setIsUnlocked] = useState(() => audioService.isAudioUnlocked());
+
+  // KOT Thermal Print Modal State
+  const [selectedKotOrder, setSelectedKotOrder] = useState<Order | null>(null);
+  const [thermalWidth, setThermalWidth] = useState<'80mm' | '58mm'>('80mm');
 
   // Live timer tick every 10 seconds
   useEffect(() => {
@@ -54,6 +64,18 @@ export default function KitchenDisplayPage() {
   const preparingOrders = orders.filter(o => o.status === 'PREPARING');
   const readyOrders = orders.filter(o => o.status === 'READY');
 
+  // Audio Chime Management: continuous chime alert if new unaccepted tickets exist
+  useEffect(() => {
+    if (newOrders.length > 0 && !isMuted) {
+      audioService.startContinuousAlert(4000);
+    } else {
+      audioService.stopContinuousAlert();
+    }
+    return () => {
+      audioService.stopContinuousAlert();
+    };
+  }, [newOrders.length, isMuted]);
+
   // Close role switch dropdown on outside click
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -64,6 +86,18 @@ export default function KitchenDisplayPage() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  const handleToggleSound = () => {
+    if (!isUnlocked) {
+      audioService.unlockAudio();
+      setIsUnlocked(true);
+    }
+    const muted = audioService.toggleMute();
+    setIsMuted(muted);
+    if (!muted) {
+      audioService.playChime();
+    }
+  };
 
   const handleSwitchRole = async (email: string) => {
     await signIn(email, 'demo123');
@@ -87,6 +121,28 @@ export default function KitchenDisplayPage() {
 
   return (
     <div className="min-h-screen bg-[#141517] text-white flex flex-col font-sans select-none">
+      {/* Print CSS rule injection for thermal receipts */}
+      <style>{`
+        @media print {
+          body * {
+            visibility: hidden !important;
+          }
+          #kot-receipt-print, #kot-receipt-print * {
+            visibility: visible !important;
+          }
+          #kot-receipt-print {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            margin: 0 !important;
+            padding: 10px !important;
+            background: white !important;
+            color: black !important;
+          }
+        }
+      `}</style>
+
       {/* KDS Header */}
       <header className="h-16 bg-[#1a1c20] border-b border-white/10 px-6 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
@@ -112,6 +168,24 @@ export default function KitchenDisplayPage() {
               <span>Back to Dashboard</span>
             </button>
           )}
+
+          {/* Sound Synthesizer Alert Toggle */}
+          <button
+            onClick={handleToggleSound}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors cursor-pointer ${
+              isMuted 
+                ? 'bg-rose-500/10 border-rose-500/30 text-rose-300 hover:bg-rose-500/20' 
+                : newOrders.length > 0
+                  ? 'bg-amber-500/20 border-amber-500/50 text-amber-300 animate-pulse ring-1 ring-amber-400'
+                  : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20'
+            }`}
+            title={isMuted ? 'Sound muted - Click to unmute and enable synthesized audio chime' : 'Sound active - Click to mute'}
+          >
+            {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+            <span className="hidden sm:inline">
+              {isMuted ? 'Sound Muted' : newOrders.length > 0 ? 'Chime Alerting' : 'KDS Sound ON'}
+            </span>
+          </button>
 
           <div className="hidden sm:flex items-center gap-2 bg-white/5 border border-white/10 px-3 py-1.5 rounded-lg text-xs font-mono">
             <Clock className="w-4 h-4 text-[#c9a84c]" />
@@ -217,6 +291,7 @@ export default function KitchenDisplayPage() {
                 actionLabel="Accept Order"
                 actionColor="bg-blue-600 hover:bg-blue-500 text-white"
                 onAction={() => handleAdvanceStatus(order.id, 'ACCEPTED')}
+                onPrintKot={() => setSelectedKotOrder(order)}
               />
             ))}
           </div>
@@ -238,6 +313,7 @@ export default function KitchenDisplayPage() {
                 actionLabel="Start Preparing"
                 actionColor="bg-amber-600 hover:bg-amber-500 text-white"
                 onAction={() => handleAdvanceStatus(order.id, 'PREPARING')}
+                onPrintKot={() => setSelectedKotOrder(order)}
               />
             ))}
           </div>
@@ -260,6 +336,7 @@ export default function KitchenDisplayPage() {
                 actionLabel="Mark Ready for Delivery"
                 actionColor="bg-emerald-600 hover:bg-emerald-500 text-white"
                 onAction={() => handleAdvanceStatus(order.id, 'READY')}
+                onPrintKot={() => setSelectedKotOrder(order)}
               />
             ))}
           </div>
@@ -282,11 +359,139 @@ export default function KitchenDisplayPage() {
                 actionLabel="Dispatched / Delivered"
                 actionColor="bg-stone-700 hover:bg-stone-600 text-white"
                 onAction={() => handleAdvanceStatus(order.id, 'DELIVERED')}
+                onPrintKot={() => setSelectedKotOrder(order)}
               />
             ))}
           </div>
         </div>
       </div>
+
+      {/* Thermal KOT Print Preview Modal */}
+      {selectedKotOrder && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-[#1e2025] border border-white/10 rounded-2xl max-w-lg w-full flex flex-col max-h-[90vh] overflow-hidden shadow-2xl">
+            {/* Modal Header */}
+            <div className="p-4 border-b border-white/10 flex items-center justify-between bg-[#141517]">
+              <div className="flex items-center gap-2">
+                <Printer className="w-5 h-5 text-[#c9a84c]" />
+                <h3 className="font-display font-bold text-sm text-white">
+                  Thermal KOT Simulator · #{selectedKotOrder.id.slice(-6).toUpperCase()}
+                </h3>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="flex items-center bg-white/10 p-0.5 rounded-lg text-xs">
+                  <button
+                    onClick={() => setThermalWidth('80mm')}
+                    className={`px-2 py-1 rounded font-mono text-[11px] font-bold ${
+                      thermalWidth === '80mm' ? 'bg-[#c9a84c] text-stone-900' : 'text-white/60'
+                    }`}
+                  >
+                    80mm
+                  </button>
+                  <button
+                    onClick={() => setThermalWidth('58mm')}
+                    className={`px-2 py-1 rounded font-mono text-[11px] font-bold ${
+                      thermalWidth === '58mm' ? 'bg-[#c9a84c] text-stone-900' : 'text-white/60'
+                    }`}
+                  >
+                    58mm
+                  </button>
+                </div>
+                <button
+                  onClick={() => setSelectedKotOrder(null)}
+                  className="p-1 rounded-lg text-white/60 hover:text-white hover:bg-white/10"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Thermal Slip Preview Canvas */}
+            <div className="flex-1 p-6 overflow-y-auto bg-stone-900 flex justify-center">
+              <div 
+                id="kot-receipt-print"
+                className={`bg-[#fdfcf7] text-stone-950 font-mono text-xs p-4 shadow-xl border border-stone-300 rounded-sm space-y-3 leading-relaxed transition-all ${
+                  thermalWidth === '80mm' ? 'w-[320px]' : 'w-[250px]'
+                }`}
+              >
+                {/* Header */}
+                <div className="text-center space-y-1">
+                  <div className="font-extrabold text-sm uppercase tracking-wider">{hotel?.name || 'Grand Palace'}</div>
+                  <div className="font-bold text-xs uppercase tracking-widest bg-stone-900 text-white py-0.5 px-2 inline-block">
+                    KITCHEN ORDER TICKET (KOT)
+                  </div>
+                  <div className="text-[11px] text-stone-600">
+                    TICKET #{selectedKotOrder.id.slice(-6).toUpperCase()} · {selectedKotOrder.type}
+                  </div>
+                </div>
+
+                <div className="border-t border-dashed border-stone-800 pt-2 space-y-1">
+                  <div className="text-center text-lg font-black tracking-wide py-1 bg-stone-200/80 rounded">
+                    {selectedKotOrder.room ? `*** ROOM ${selectedKotOrder.room.number} ***` : '*** DINE-IN RESTAURANT ***'}
+                  </div>
+                  <div className="flex justify-between text-[11px] text-stone-700">
+                    <span>Date: {new Date(selectedKotOrder.created_at).toLocaleDateString('en-IN')}</span>
+                    <span>Time: {new Date(selectedKotOrder.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                  </div>
+                  {selectedKotOrder.guest && (
+                    <div className="text-[11px] text-stone-700">
+                      Guest: <strong>{selectedKotOrder.guest.first_name} {selectedKotOrder.guest.last_name}</strong>
+                    </div>
+                  )}
+                </div>
+
+                {/* Items */}
+                <div className="border-t border-dashed border-stone-800 pt-2">
+                  <div className="flex justify-between font-bold text-[11px] border-b border-stone-400 pb-1 mb-1">
+                    <span>QTY  ITEM</span>
+                    <span>STATION</span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {selectedKotOrder.items.map(i => (
+                      <div key={i.id} className="flex justify-between items-start">
+                        <div className="font-bold text-xs">
+                          <span className="text-sm font-black mr-2">[{i.quantity}]</span>
+                          {i.name.toUpperCase()}
+                        </div>
+                        <span className="text-[10px] text-stone-600 uppercase font-bold">KITCHEN</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Special Instructions */}
+                {selectedKotOrder.special_instructions && (
+                  <div className="border-t border-dashed border-stone-800 pt-2 bg-amber-100/60 p-2 rounded">
+                    <span className="font-bold block text-[10px] uppercase">GUEST INSTRUCTION:</span>
+                    <p className="text-[11px] font-bold text-stone-900">{selectedKotOrder.special_instructions}</p>
+                  </div>
+                )}
+
+                {/* Footer */}
+                <div className="border-t border-dashed border-stone-800 pt-2 text-center text-[10px] text-stone-600 space-y-0.5">
+                  <div>DISPATCH VIA: STAYNEXA KDS</div>
+                  <div className="font-mono text-[9px]">POS VERIFICATION: {selectedKotOrder.id}</div>
+                  <div className="text-[8px] uppercase tracking-wider text-stone-500 pt-1">*** END OF ORDER TICKET ***</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="p-4 border-t border-white/10 flex justify-between bg-[#141517]">
+              <Button variant="outline" onClick={() => setSelectedKotOrder(null)}>
+                Close Preview
+              </Button>
+              <Button 
+                variant="primary" 
+                onClick={() => window.print()}
+                iconLeft={<Printer className="w-4 h-4" />}
+              >
+                Print KOT (Thermal POS)
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -298,12 +503,14 @@ function KdsCard({
   actionLabel,
   actionColor,
   onAction,
+  onPrintKot,
 }: {
   order: Order;
   elapsedMins: number;
   actionLabel: string;
   actionColor: string;
   onAction: () => void;
+  onPrintKot: () => void;
 }) {
   const isUrgent = elapsedMins >= 20;
 
@@ -346,14 +553,24 @@ function KdsCard({
         </div>
       )}
 
-      {/* Action Button */}
-      <button
-        onClick={onAction}
-        className={`w-full py-2.5 px-4 rounded-lg font-bold text-xs uppercase tracking-wider transition-colors active:scale-98 cursor-pointer flex items-center justify-center gap-2 ${actionColor}`}
-      >
-        <span>{actionLabel}</span>
-        <ArrowRight className="w-3.5 h-3.5" />
-      </button>
+      {/* Actions */}
+      <div className="flex items-center gap-2 pt-1">
+        <button
+          onClick={onPrintKot}
+          className="p-2.5 rounded-lg bg-white/5 hover:bg-white/15 text-white/80 hover:text-white border border-white/10 transition-colors cursor-pointer"
+          title="Print POS Kitchen Order Ticket (KOT)"
+        >
+          <Printer className="w-4 h-4" />
+        </button>
+
+        <button
+          onClick={onAction}
+          className={`flex-1 py-2.5 px-4 rounded-lg font-bold text-xs uppercase tracking-wider transition-colors active:scale-98 cursor-pointer flex items-center justify-center gap-2 ${actionColor}`}
+        >
+          <span>{actionLabel}</span>
+          <ArrowRight className="w-3.5 h-3.5" />
+        </button>
+      </div>
     </div>
   );
 }

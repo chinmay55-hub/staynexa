@@ -125,6 +125,7 @@ export const DEMO_HOTEL_SETTINGS: HotelSettings[] = [
     allow_room_charge: true,
     require_deposit: true,
     deposit_percent: 20,
+    google_review_url: 'https://search.google.com/local/writereview?placeid=ChIJdd4hrwugDDkRkX6Z1Gj9Yn4',
   },
   {
     id: 'settings-002',
@@ -137,6 +138,7 @@ export const DEMO_HOTEL_SETTINGS: HotelSettings[] = [
     allow_room_charge: true,
     require_deposit: false,
     deposit_percent: 0,
+    google_review_url: 'https://search.google.com/local/writereview?placeid=ChIJk9XwPq_CwjsROb0Qj001',
   },
   {
     id: 'settings-003',
@@ -149,6 +151,7 @@ export const DEMO_HOTEL_SETTINGS: HotelSettings[] = [
     allow_room_charge: true,
     require_deposit: true,
     deposit_percent: 30,
+    google_review_url: 'https://search.google.com/local/writereview?placeid=ChIJ8_Qj8mSvvzsRK9b1-azureresort',
   },
 ];
 
@@ -303,7 +306,7 @@ export const DEMO_MENU_CATEGORIES: MenuCategory[] = [
   { id: 'mc-001', hotel_id: 'hotel-001', name: 'Starters', description: 'Appetizers and soups', sort_order: 1, is_active: true },
   { id: 'mc-002', hotel_id: 'hotel-001', name: 'Main Course', description: 'Indian and Continental mains', sort_order: 2, is_active: true },
   { id: 'mc-003', hotel_id: 'hotel-001', name: 'Breads', description: 'Fresh baked breads', sort_order: 3, is_active: true },
-  { id: 'mc-004', hotel_id: 'hotel-001', name: 'Beverages', description: 'Hot and cold drinks', sort_order: 4, is_active: true },
+  { id: 'mc-004', hotel_id: 'hotel-001', name: 'Beverages & Water', description: 'Packaged mineral water, hot and cold drinks', sort_order: 4, is_active: true },
   { id: 'mc-005', hotel_id: 'hotel-001', name: 'Desserts', description: 'Sweet endings', sort_order: 5, is_active: true },
   { id: 'mc-006', hotel_id: 'hotel-003', name: 'Seafood', description: 'Fresh catch from the sea', sort_order: 1, is_active: true },
   { id: 'mc-007', hotel_id: 'hotel-003', name: 'Goan Specials', description: 'Authentic Goan cuisine', sort_order: 2, is_active: true },
@@ -322,7 +325,9 @@ export const DEMO_MENU_ITEMS: MenuItem[] = [
   { id: 'mi-008', hotel_id: 'hotel-001', category_id: 'mc-003', name: 'Tandoori Roti', description: 'Whole wheat bread from tandoor', price: 45, tax_percent: 5, is_veg: true, is_available: true, tags: [], preparation_time_minutes: 8 },
   { id: 'mi-009', hotel_id: 'hotel-001', category_id: 'mc-004', name: 'Masala Chai', description: 'Spiced Indian tea', price: 80, tax_percent: 5, is_veg: true, is_available: true, tags: [], preparation_time_minutes: 5 },
   { id: 'mi-010', hotel_id: 'hotel-001', category_id: 'mc-004', name: 'Fresh Lime Soda', description: 'Sweet or salted lime soda', price: 120, tax_percent: 5, is_veg: true, is_available: true, tags: [], preparation_time_minutes: 3 },
-  { id: 'mi-011', hotel_id: 'hotel-001', category_id: 'mc-005', name: 'Gulab Jamun', description: 'Soft milk dumplings in sugar syrup', price: 150, tax_percent: 5, is_veg: true, is_available: true, tags: ['popular'], preparation_time_minutes: 5 },
+  { id: 'mi-011', hotel_id: 'hotel-001', category_id: 'mc-004', name: 'Packaged Mineral Water 1L', description: 'Natural spring packaged mineral water bottle (1000ml)', price: 60, tax_percent: 5, is_veg: true, is_available: true, tags: ['water', 'essential'], preparation_time_minutes: 2 },
+  { id: 'mi-012', hotel_id: 'hotel-001', category_id: 'mc-004', name: 'Himalayan Sparkling Water 750ml', description: 'Artisanal sparkling natural mineral water with fine effervescence', price: 150, tax_percent: 5, is_veg: true, is_available: true, tags: ['water', 'premium'], preparation_time_minutes: 2 },
+  { id: 'mi-013', hotel_id: 'hotel-001', category_id: 'mc-005', name: 'Gulab Jamun', description: 'Soft milk dumplings in sugar syrup', price: 150, tax_percent: 5, is_veg: true, is_available: true, tags: ['popular'], preparation_time_minutes: 5 },
   // Azure Cove
   { id: 'mi-101', hotel_id: 'hotel-003', category_id: 'mc-006', name: 'Grilled Tiger Prawns', description: 'Fresh tiger prawns with garlic butter', price: 850, tax_percent: 5, is_veg: false, is_available: true, tags: ['bestseller'], preparation_time_minutes: 20 },
   { id: 'mi-102', hotel_id: 'hotel-003', category_id: 'mc-007', name: 'Goan Fish Curry', description: 'Traditional red Goan fish curry with rice', price: 520, tax_percent: 5, is_veg: false, is_available: true, tags: ['authentic'], preparation_time_minutes: 25 },

@@ -75,6 +75,7 @@ function AppRoutes() {
       {/* Public routes */}
       <Route path="/login" element={<LoginPage />} />
       <Route path="/guest/:token" element={<GuestPortalPage />} />
+      <Route path="/q/:token" element={<GuestPortalPage />} />
 
       {/* Home redirect */}
       <Route path="/" element={
@@ -141,9 +142,14 @@ function AppRoutes() {
         <Route path="folios" element={<FoliosPage />} />
       </Route>
 
-      {/* Kitchen */}
+      {/* Kitchen & KDS (accessible to Kitchen, Restaurant, Reception, and Managers) */}
       <Route path="/kitchen" element={
-        <ProtectedRoute roles={['KITCHEN', 'RESTAURANT_MANAGER', 'HOTEL_ADMIN', 'SUPER_ADMIN']}>
+        <ProtectedRoute roles={['KITCHEN', 'RESTAURANT_MANAGER', 'RECEPTION', 'HOTEL_MANAGER', 'HOTEL_ADMIN', 'SUPER_ADMIN']}>
+          <KitchenDisplayPage />
+        </ProtectedRoute>
+      } />
+      <Route path="/kds" element={
+        <ProtectedRoute roles={['KITCHEN', 'RESTAURANT_MANAGER', 'RECEPTION', 'HOTEL_MANAGER', 'HOTEL_ADMIN', 'SUPER_ADMIN']}>
           <KitchenDisplayPage />
         </ProtectedRoute>
       } />

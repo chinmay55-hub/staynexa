@@ -10,8 +10,13 @@ import {
   maintenanceService,
   qrService,
   subscriptionService,
-  featureFlagService
+  featureFlagService,
+  menuService,
+  serviceRequestService
 } from '../services/demoDataService';
+import { audioService } from '../services/audioService';
+import { paymentService } from '../services/paymentService';
+import { parseDatabaseError } from '../lib/errorHandler';
 
 describe('STAYNEXA CORE HOTEL OPERATING SYSTEM TEST SUITE', () => {
 
@@ -338,6 +343,127 @@ describe('STAYNEXA CORE HOTEL OPERATING SYSTEM TEST SUITE', () => {
       expect(hotel2Flags.whatsapp_notifications).toBe(false);
       // global should remain unchanged
       expect(globalFlags.whatsapp_notifications).toBe(false);
+    });
+  });
+
+  // ─── 9. KDS AUDIO SYNTHESIZER ENGINE ──────────────────────────────────────
+  describe('KDS Web Audio API Synthesizer Engine', () => {
+    it('should manage mute state and toggle correctly', () => {
+      audioService.setMuted(false);
+      expect(audioService.isAudioMuted()).toBe(false);
+
+      const toggled = audioService.toggleMute();
+      expect(toggled).toBe(true);
+      expect(audioService.isAudioMuted()).toBe(true);
+
+      audioService.setMuted(false);
+      expect(audioService.isAudioMuted()).toBe(false);
+    });
+
+    it('should handle continuous alert start and stop', () => {
+      audioService.setMuted(false);
+      audioService.startContinuousAlert(5000);
+      expect(audioService.getIsAlerting()).toBe(true);
+
+      audioService.stopContinuousAlert();
+      expect(audioService.getIsAlerting()).toBe(false);
+    });
+  });
+
+  // ─── 10. IN-ROOM DINING & WATER RECLASSIFICATION ──────────────────────────
+  describe('In-Room Dining vs Housekeeping Water Classification', () => {
+    it('should include Paid Mineral Water in Food & Beverage menu under Beverages & Water', () => {
+      const items = menuService.getItems('hotel-001');
+      const mineralWater = items.find(i => i.name.includes('Packaged Mineral Water 1L'));
+      const sparklingWater = items.find(i => i.name.includes('Himalayan Sparkling Water'));
+
+      expect(mineralWater).toBeDefined();
+      expect(mineralWater!.price).toBe(60);
+      expect(mineralWater!.category_id).toBe('mc-004');
+
+      expect(sparklingWater).toBeDefined();
+      expect(sparklingWater!.price).toBe(150);
+      expect(sparklingWater!.category_id).toBe('mc-004');
+
+      const category = menuService.getCategories('hotel-001').find(c => c.id === 'mc-004');
+      expect(category?.name).toBe('Beverages & Water');
+    });
+
+    it('should strictly exclude paid mineral water from housekeeping complimentary services', () => {
+      const services = serviceRequestService.getServices('hotel-001');
+      const waterService = services.find(s => s.name.toLowerCase().includes('water bottle') || s.name.toLowerCase().includes('mineral water'));
+      // Housekeeping services should not list paid packaged mineral water
+      expect(waterService).toBeUndefined();
+    });
+  });
+
+  // ─── 11. FINANCIAL MATH & PAYMENT LEDGER ──────────────────────────────────
+  describe('Strict Decimal Rounding & Payment Calculations', () => {
+    it('should prevent floating-point drift with strict rounding', () => {
+      const drifted = 0.1 + 0.2; // 0.30000000000000004 in raw JS
+      expect(paymentService.roundCurrency(drifted)).toBe(0.3);
+
+      const complex = 199.99 * 3; // 599.97000000000003
+      expect(paymentService.roundCurrency(complex)).toBe(599.97);
+    });
+
+    it('should calculate GST tax split accurately without floating drift', () => {
+      const taxInfo = paymentService.calculateTaxes(1250, 5, 10);
+      expect(taxInfo.subtotal).toBe(1250);
+      expect(taxInfo.totalTax).toBe(62.5); // 5% of 1250
+      expect(taxInfo.cgst + taxInfo.sgst).toBe(62.5);
+      expect(taxInfo.serviceCharge).toBe(125); // 10% of 1250
+      expect(taxInfo.grandTotal).toBe(1437.5);
+    });
+
+    it('should record payments to folio accurately', () => {
+      const folio = folioService.getAll('hotel-001')[0];
+      const initialPayments = folio.total_payments;
+      const initialOutstanding = folio.outstanding;
+
+      const result = paymentService.recordPayment({
+        hotelId: 'hotel-001',
+        folioId: folio.id,
+        amount: 500,
+        method: 'UPI',
+        reference: 'TEST-UPI-12345',
+      });
+
+      expect(result.payment.amount).toBe(500);
+      expect(result.folio.total_payments).toBe(initialPayments + 500);
+      expect(result.folio.outstanding).toBe(initialOutstanding - 500);
+    });
+  });
+
+  // ─── 12. CENTRALIZED DATABASE ERROR HANDLER ───────────────────────────────
+  describe('Database Error Handler & PostgreSQL Translation', () => {
+    it('should translate PostgreSQL code 23505 to Unique Constraint user message', () => {
+      const err = parseDatabaseError({ code: '23505', message: 'duplicate key value violates unique constraint' });
+      expect(err.code).toBe('23505');
+      expect(err.userMessage).toContain('already exists');
+      expect(err.canRetry).toBe(false);
+    });
+
+    it('should translate PostgreSQL code 42501 to RLS access denied message', () => {
+      const err = parseDatabaseError({ code: '42501', message: 'permission denied for table rooms' });
+      expect(err.code).toBe('42501');
+      expect(err.userMessage).toContain('Access denied');
+      expect(err.canRetry).toBe(false);
+    });
+
+    it('should translate connection errors as retryable', () => {
+      const err = parseDatabaseError({ code: '08006', message: 'connection failure' });
+      expect(err.canRetry).toBe(true);
+    });
+  });
+
+  // ─── 13. GOOGLE REVIEW INTEGRATION ────────────────────────────────────────
+  describe('Google Review Configuration', () => {
+    it('should have google_review_url configured for hotel settings', () => {
+      const settings = hotelService.getSettings('hotel-001');
+      expect(settings).toBeDefined();
+      expect(settings?.google_review_url).toBeDefined();
+      expect(settings?.google_review_url).toContain('https://search.google.com/local/writereview');
     });
   });
 });

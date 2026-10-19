@@ -27,6 +27,7 @@ export default function QRCodesPage() {
   const [previewQr, setPreviewQr] = useState<QRCodeType | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [isPrintSheetOpen, setIsPrintSheetOpen] = useState(false);
+  const [bulkQrUrls, setBulkQrUrls] = useState<{ [roomId: string]: string }>({});
 
   // Generate QR data URL when preview opens
   useEffect(() => {
@@ -37,6 +38,22 @@ export default function QRCodesPage() {
         .catch((err: any) => console.error('QR Gen error:', err));
     }
   }, [previewQr]);
+
+  // Generate QR data URLs for all rooms when bulk print sheet opens
+  useEffect(() => {
+    if (isPrintSheetOpen) {
+      rooms.forEach(room => {
+        const qr = qrCodes.find(q => q.room_id === room.id && q.is_active);
+        const token = qr?.token || `gp-r${room.number}-demo`;
+        const fullUrl = `${window.location.origin}/guest/${token}`;
+        QRCode.toDataURL(fullUrl, { width: 180, margin: 1, color: { dark: '#1a2744', light: '#ffffff' } })
+          .then((url: string) => {
+            setBulkQrUrls(prev => ({ ...prev, [room.id]: url }));
+          })
+          .catch((err: any) => console.error('Bulk QR generation error:', err));
+      });
+    }
+  }, [isPrintSheetOpen, rooms, qrCodes]);
 
   const handleGenerateAll = () => {
     // Generate QR for rooms that don't have an active one
@@ -236,7 +253,7 @@ export default function QRCodesPage() {
         <Modal
           isOpen={true}
           onClose={() => setIsPrintSheetOpen(false)}
-          title="Printable Room Standees Sheet"
+          title="Printable Room Standees Sheet (Tent Cards)"
           size="lg"
           footer={
             <div className="flex justify-between w-full">
@@ -251,15 +268,51 @@ export default function QRCodesPage() {
             </div>
           }
         >
-          <div className="grid grid-cols-2 gap-4 max-h-[60vh] overflow-y-auto p-2">
+          {/* Print CSS rule injection */}
+          <style>{`
+            @media print {
+              body * {
+                visibility: hidden !important;
+              }
+              #bulk-qr-sheet-print, #bulk-qr-sheet-print * {
+                visibility: visible !important;
+              }
+              #bulk-qr-sheet-print {
+                position: absolute !important;
+                left: 0 !important;
+                top: 0 !important;
+                width: 100% !important;
+                margin: 0 !important;
+                padding: 10px !important;
+                display: grid !important;
+                grid-template-columns: repeat(2, 1fr) !important;
+                gap: 16px !important;
+              }
+            }
+          `}</style>
+
+          <div id="bulk-qr-sheet-print" className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-[60vh] overflow-y-auto p-2">
             {rooms.map(room => (
-              <div key={room.id} className="p-4 border-2 border-dashed border-stone-300 rounded-xl text-center space-y-2">
-                <div className="font-bold text-sm text-stone-800">{hotel?.name}</div>
-                <div className="text-xl font-extrabold text-[#1a2744]">Room {room.number}</div>
-                <div className="w-24 h-24 mx-auto bg-stone-100 rounded flex items-center justify-center text-stone-400 text-xs">
-                  <QrCode className="w-12 h-12 text-[#1a2744]" />
+              <div 
+                key={room.id} 
+                className="p-5 border-2 border-dashed border-stone-300 rounded-2xl text-center space-y-2.5 bg-white break-inside-avoid shadow-2xs"
+              >
+                <div className="text-[10px] uppercase font-bold tracking-widest text-[#c9a84c] border-b border-dashed border-stone-200 pb-1">
+                  FOLD LINE · TABLE TENT STAND
                 </div>
-                <div className="text-[10px] text-stone-500 font-medium">Scan for In-Room Dining & Concierge</div>
+                <div className="font-display font-bold text-sm text-stone-900">{hotel?.name}</div>
+                <div className="text-xl font-extrabold text-[#1a2744]">Room {room.number}</div>
+                
+                <div className="w-32 h-32 mx-auto flex items-center justify-center p-1 bg-stone-50 rounded-xl border border-stone-200">
+                  {bulkQrUrls[room.id] ? (
+                    <img src={bulkQrUrls[room.id]} alt={`Room ${room.number} QR`} className="w-28 h-28 mx-auto" />
+                  ) : (
+                    <div className="text-xs text-stone-400">Rendering QR...</div>
+                  )}
+                </div>
+
+                <div className="text-xs font-bold text-stone-800">Scan for In-Room Dining & Concierge</div>
+                <div className="text-[10px] text-stone-500">Wi-Fi Access · Room Service · Instant Requests</div>
               </div>
             ))}
           </div>
