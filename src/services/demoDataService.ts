@@ -551,4 +551,48 @@ export const analyticsService = {
 export const subscriptionService = {
   getAll: (): Subscription[] => subscriptions,
   getByHotel: (hotelId: string): Subscription | undefined => subscriptions.find(s => s.hotel_id === hotelId),
+  update: (id: string, data: Partial<Subscription>): Subscription | undefined => {
+    const idx = subscriptions.findIndex(s => s.id === id);
+    if (idx === -1) return undefined;
+    subscriptions[idx] = { ...subscriptions[idx], ...data };
+    return subscriptions[idx];
+  },
+};
+
+// ─── Feature Flags ────────────────────────────────────────────────────────────
+
+const defaultFlagsMap: Record<string, boolean> = {
+  restaurant_module: true,
+  room_service: true,
+  kitchen_display: true,
+  housekeeping_module: true,
+  maintenance_tickets: true,
+  guest_qr_portal: true,
+  whatsapp_notifications: false,
+  digital_checkin: true,
+  ota_channel_sync: false,
+  custom_domains: true,
+  ai_concierge: false,
+};
+
+let featureFlagsStore: Record<string, Record<string, boolean>> = {
+  GLOBAL: { ...defaultFlagsMap },
+};
+
+export const featureFlagService = {
+  getFlagsForScope: (scope: string): Record<string, boolean> => {
+    const globalFlags = featureFlagsStore['GLOBAL'] || { ...defaultFlagsMap };
+    if (scope === 'GLOBAL') return { ...globalFlags };
+    const hotelFlags = featureFlagsStore[scope] || {};
+    return { ...globalFlags, ...hotelFlags };
+  },
+  setFlag: (scope: string, key: string, enabled: boolean) => {
+    if (!featureFlagsStore[scope]) {
+      featureFlagsStore[scope] = { ...(featureFlagsStore['GLOBAL'] || defaultFlagsMap) };
+    }
+    featureFlagsStore[scope][key] = enabled;
+  },
+  saveFlagsForScope: (scope: string, flags: Record<string, boolean>) => {
+    featureFlagsStore[scope] = { ...flags };
+  },
 };

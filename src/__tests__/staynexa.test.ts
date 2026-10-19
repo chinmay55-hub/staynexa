@@ -8,7 +8,9 @@ import {
   orderService, 
   housekeepingService, 
   maintenanceService,
-  qrService 
+  qrService,
+  subscriptionService,
+  featureFlagService
 } from '../services/demoDataService';
 
 describe('STAYNEXA CORE HOTEL OPERATING SYSTEM TEST SUITE', () => {
@@ -277,6 +279,65 @@ describe('STAYNEXA CORE HOTEL OPERATING SYSTEM TEST SUITE', () => {
 
       qrService.deactivate(qr.id);
       expect(qrService.getByToken(qr.token)).toBeUndefined();
+    });
+  });
+
+  // ─── 7. SUPER ADMIN TENANT & SUBSCRIPTION CONTROLS ────────────────────────
+  describe('Super Admin Tenant & Subscription Controls', () => {
+    it('should update hotel lifecycle status correctly', () => {
+      const hotel = hotelService.getById('hotel-002');
+      expect(hotel).toBeDefined();
+
+      const updated = hotelService.update('hotel-002', { status: 'SUSPENDED' });
+      expect(updated?.status).toBe('SUSPENDED');
+
+      const refetched = hotelService.getById('hotel-002');
+      expect(refetched?.status).toBe('SUSPENDED');
+
+      // Revert back to ACTIVE
+      hotelService.update('hotel-002', { status: 'ACTIVE' });
+      expect(hotelService.getById('hotel-002')?.status).toBe('ACTIVE');
+    });
+
+    it('should modify tenant subscription tiers and persist changes', () => {
+      const sub = subscriptionService.getByHotel('hotel-001');
+      expect(sub).toBeDefined();
+
+      const originalPlan = sub!.plan;
+      const updated = subscriptionService.update(sub!.id, { plan: 'ENTERPRISE', status: 'ACTIVE' });
+      expect(updated?.plan).toBe('ENTERPRISE');
+
+      const refetched = subscriptionService.getByHotel('hotel-001');
+      expect(refetched?.plan).toBe('ENTERPRISE');
+
+      // Revert
+      subscriptionService.update(sub!.id, { plan: originalPlan });
+    });
+  });
+
+  // ─── 8. FEATURE FLAG SCOPING & INHERITANCE ────────────────────────────────
+  describe('Platform Feature Flags Engine', () => {
+    it('should provide global default flags', () => {
+      const globalFlags = featureFlagService.getFlagsForScope('GLOBAL');
+      expect(globalFlags.restaurant_module).toBe(true);
+      expect(globalFlags.room_service).toBe(true);
+      expect(globalFlags.whatsapp_notifications).toBe(false);
+    });
+
+    it('should inherit global flags and support property-specific overrides', () => {
+      // Set hotel-001 specific override for whatsapp_notifications
+      featureFlagService.setFlag('hotel-001', 'whatsapp_notifications', true);
+
+      const hotel1Flags = featureFlagService.getFlagsForScope('hotel-001');
+      const hotel2Flags = featureFlagService.getFlagsForScope('hotel-002');
+      const globalFlags = featureFlagService.getFlagsForScope('GLOBAL');
+
+      // hotel-001 should have it enabled
+      expect(hotel1Flags.whatsapp_notifications).toBe(true);
+      // other hotels should retain the global false
+      expect(hotel2Flags.whatsapp_notifications).toBe(false);
+      // global should remain unchanged
+      expect(globalFlags.whatsapp_notifications).toBe(false);
     });
   });
 });

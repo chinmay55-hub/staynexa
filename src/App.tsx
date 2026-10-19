@@ -7,6 +7,7 @@ import AppLayout from './components/layout/AppLayout';
 // Super Admin pages
 import SuperAdminDashboard from './pages/super-admin/SuperAdminDashboard';
 import HotelsManagementPage from './pages/super-admin/HotelsManagementPage';
+import UsersManagementPage from './pages/super-admin/UsersManagementPage';
 import SubscriptionsPage from './pages/super-admin/SubscriptionsPage';
 import FeatureFlagsPage from './pages/super-admin/FeatureFlagsPage';
 import PlatformAnalyticsPage from './pages/super-admin/PlatformAnalyticsPage';
@@ -90,6 +91,7 @@ function AppRoutes() {
       }>
         <Route index element={<SuperAdminDashboard />} />
         <Route path="hotels" element={<HotelsManagementPage />} />
+        <Route path="users" element={<UsersManagementPage />} />
         <Route path="subscriptions" element={<SubscriptionsPage />} />
         <Route path="flags" element={<FeatureFlagsPage />} />
         <Route path="analytics" element={<PlatformAnalyticsPage />} />
@@ -162,6 +164,7 @@ function AppRoutes() {
         </ProtectedRoute>
       }>
         <Route index element={<HousekeepingPage />} />
+        <Route path="rooms" element={<HousekeepingPage defaultTab="ROOMS" />} />
       </Route>
 
       {/* Maintenance */}
@@ -171,6 +174,7 @@ function AppRoutes() {
         </ProtectedRoute>
       }>
         <Route index element={<MaintenancePage />} />
+        <Route path="all" element={<MaintenancePage />} />
       </Route>
 
       {/* Catch all */}

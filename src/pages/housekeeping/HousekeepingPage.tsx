@@ -30,14 +30,18 @@ import {
   Modal 
 } from '../../components/ui';
 
-export default function HousekeepingPage() {
+export default function HousekeepingPage({ defaultTab = 'TASKS' }: { defaultTab?: 'TASKS' | 'ROOMS' } = {}) {
   const { user } = useAuth();
   const hotelId = user?.hotel_id || 'hotel-001';
 
   const [tasks, setTasks] = useState(() => housekeepingService.getTasks(hotelId));
   const [rooms, setRooms] = useState(() => roomService.getAll(hotelId));
-  const [activeTab, setActiveTab] = useState<'TASKS' | 'ROOMS'>('TASKS');
+  const [activeTab, setActiveTab] = useState<'TASKS' | 'ROOMS'>(defaultTab);
   const [search, setSearch] = useState('');
+
+  React.useEffect(() => {
+    setActiveTab(defaultTab);
+  }, [defaultTab]);
 
   // Report Maintenance Modal
   const [maintenanceRoom, setMaintenanceRoom] = useState<Room | null>(null);

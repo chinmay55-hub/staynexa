@@ -1,0 +1,269 @@
+import React, { useState } from 'react';
+import { Users, Search, Plus, Mail, Phone, Building, ShieldCheck, CheckCircle2, XCircle } from 'lucide-react';
+import { Card, CardContent, CardHeader, Button, Input, Select, Badge, Modal } from '../../components/ui';
+import { DEMO_PROFILES, DEMO_HOTELS, DEMO_MEMBERSHIPS } from '../../data/demo';
+import type { Profile, UserRole } from '../../types';
+
+export default function UsersManagementPage() {
+  const [users, setUsers] = useState<Profile[]>(() => DEMO_PROFILES);
+  const [hotels] = useState(() => DEMO_HOTELS);
+  const [memberships] = useState(() => DEMO_MEMBERSHIPS);
+  const [search, setSearch] = useState('');
+  const [roleFilter, setRoleFilter] = useState('ALL');
+  const [hotelFilter, setHotelFilter] = useState('ALL');
+
+  // New user modal
+  const [isAddOpen, setIsAddOpen] = useState(false);
+  const [newUser, setNewUser] = useState({
+    full_name: '',
+    email: '',
+    phone: '',
+    role: 'RECEPTION' as UserRole,
+    hotel_id: 'hotel-001',
+  });
+
+  const filteredUsers = users.filter(u => {
+    const mem = memberships.find(m => m.user_id === u.user_id);
+    const matchesSearch = 
+      u.full_name.toLowerCase().includes(search.toLowerCase()) ||
+      u.email.toLowerCase().includes(search.toLowerCase()) ||
+      u.role.toLowerCase().includes(search.toLowerCase());
+    const matchesRole = roleFilter === 'ALL' || u.role === roleFilter;
+    const matchesHotel = hotelFilter === 'ALL' || (mem && mem.hotel_id === hotelFilter) || (u.role === 'SUPER_ADMIN' && hotelFilter === 'PLATFORM');
+    return matchesSearch && matchesRole && matchesHotel;
+  });
+
+  const handleToggleStatus = (userId: string) => {
+    setUsers(prev => prev.map(u => u.id === userId ? { ...u, is_active: !u.is_active } : u));
+  };
+
+  const handleCreateUser = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newUser.full_name || !newUser.email) return;
+    const created: Profile = {
+      id: `user-${Date.now()}`,
+      user_id: `user-${Date.now()}`,
+      full_name: newUser.full_name,
+      email: newUser.email,
+      phone: newUser.phone,
+      role: newUser.role,
+      is_active: true,
+      created_at: new Date().toISOString(),
+    };
+    setUsers(prev => [...prev, created]);
+    setIsAddOpen(false);
+    setNewUser({
+      full_name: '',
+      email: '',
+      phone: '',
+      role: 'RECEPTION',
+      hotel_id: 'hotel-001',
+    });
+  };
+
+  const getRoleBadgeVariant = (role: UserRole) => {
+    switch (role) {
+      case 'SUPER_ADMIN': return 'bg-amber-100 text-amber-900 border-amber-300';
+      case 'HOTEL_ADMIN': return 'bg-purple-100 text-purple-900 border-purple-300';
+      case 'HOTEL_MANAGER': return 'bg-blue-100 text-blue-900 border-blue-300';
+      case 'RECEPTION': return 'bg-emerald-100 text-emerald-900 border-emerald-300';
+      case 'KITCHEN': return 'bg-orange-100 text-orange-900 border-orange-300';
+      case 'HOUSEKEEPING': return 'bg-teal-100 text-teal-900 border-teal-300';
+      case 'MAINTENANCE': return 'bg-rose-100 text-rose-900 border-rose-300';
+      default: return 'bg-stone-100 text-stone-800 border-stone-300';
+    }
+  };
+
+  return (
+    <div className="p-6 max-w-7xl mx-auto space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-display font-bold text-stone-900">Platform Users & Access</h1>
+          <p className="text-stone-500 text-sm">Directory of all registered operators, hotel administrators, and staff members.</p>
+        </div>
+        <Button 
+          variant="primary" 
+          iconLeft={<Plus className="w-4 h-4" />}
+          onClick={() => setIsAddOpen(true)}
+        >
+          Add Operator / User
+        </Button>
+      </div>
+
+      <Card className="shadow-sm">
+        <CardContent className="p-4 flex flex-col sm:flex-row gap-4">
+          <div className="flex-1">
+            <Input
+              placeholder="Search by name, email or role..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              icon={<Search className="w-4 h-4 text-stone-400" />}
+            />
+          </div>
+          <div className="w-full sm:w-48">
+            <Select
+              value={roleFilter}
+              onChange={e => setRoleFilter(e.target.value)}
+              options={[
+                { value: 'ALL', label: 'All Roles' },
+                { value: 'SUPER_ADMIN', label: 'Super Admin' },
+                { value: 'HOTEL_ADMIN', label: 'Hotel Admin' },
+                { value: 'RECEPTION', label: 'Reception' },
+                { value: 'KITCHEN', label: 'Kitchen' },
+                { value: 'HOUSEKEEPING', label: 'Housekeeping' },
+                { value: 'MAINTENANCE', label: 'Maintenance' },
+              ]}
+            />
+          </div>
+          <div className="w-full sm:w-56">
+            <Select
+              value={hotelFilter}
+              onChange={e => setHotelFilter(e.target.value)}
+              options={[
+                { value: 'ALL', label: 'All Properties' },
+                { value: 'PLATFORM', label: 'Platform Only' },
+                ...hotels.map(h => ({ value: h.id, label: h.name })),
+              ]}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="shadow-sm">
+        <CardHeader title="Operator Directory" description={`Showing ${filteredUsers.length} user accounts`} />
+        <CardContent>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-stone-200 text-stone-500 font-medium">
+                  <th className="pb-3">User</th>
+                  <th className="pb-3">Role</th>
+                  <th className="pb-3">Assigned Property</th>
+                  <th className="pb-3">Contact</th>
+                  <th className="pb-3">Status</th>
+                  <th className="pb-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-stone-100">
+                {filteredUsers.map(u => {
+                  const mem = memberships.find(m => m.user_id === u.user_id);
+                  const hotel = hotels.find(h => h.id === mem?.hotel_id);
+
+                  return (
+                    <tr key={u.id} className="hover:bg-stone-50/60 transition-colors">
+                      <td className="py-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-full bg-[#1a2744] text-white flex items-center justify-center font-bold text-xs">
+                            {u.full_name.charAt(0)}
+                          </div>
+                          <div>
+                            <div className="font-semibold text-stone-900">{u.full_name}</div>
+                            <div className="text-xs text-stone-500">{u.email}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="py-4">
+                        <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${getRoleBadgeVariant(u.role)}`}>
+                          {u.role}
+                        </span>
+                      </td>
+                      <td className="py-4 text-xs text-stone-700">
+                        {u.role === 'SUPER_ADMIN' ? (
+                          <span className="font-semibold text-[#c9a84c]">Platform Global</span>
+                        ) : (
+                          <span>{hotel?.name || 'Unassigned'}</span>
+                        )}
+                      </td>
+                      <td className="py-4 text-xs text-stone-600">
+                        {u.phone || '—'}
+                      </td>
+                      <td className="py-4">
+                        {u.is_active ? (
+                          <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Active
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-xs font-medium text-stone-400">
+                            <XCircle className="w-3.5 h-3.5 text-stone-400" /> Inactive
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-4 text-right">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleToggleStatus(u.id)}
+                        >
+                          {u.is_active ? 'Deactivate' : 'Activate'}
+                        </Button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Add User Modal */}
+      <Modal
+        isOpen={isAddOpen}
+        onClose={() => setIsAddOpen(false)}
+        title="Add Platform User / Operator"
+        footer={
+          <div className="flex justify-end gap-2 w-full">
+            <Button variant="outline" onClick={() => setIsAddOpen(false)}>Cancel</Button>
+            <Button variant="primary" onClick={handleCreateUser}>Create User</Button>
+          </div>
+        }
+      >
+        <form onSubmit={handleCreateUser} className="space-y-4">
+          <Input
+            label="Full Name"
+            required
+            placeholder="e.g. Deepak Verma"
+            value={newUser.full_name}
+            onChange={e => setNewUser({ ...newUser, full_name: e.target.value })}
+          />
+          <Input
+            label="Email Address"
+            type="email"
+            required
+            placeholder="e.g. deepak@hotel.com"
+            value={newUser.email}
+            onChange={e => setNewUser({ ...newUser, email: e.target.value })}
+          />
+          <Input
+            label="Phone Number"
+            placeholder="+91 98765 43210"
+            value={newUser.phone}
+            onChange={e => setNewUser({ ...newUser, phone: e.target.value })}
+          />
+          <Select
+            label="Role"
+            value={newUser.role}
+            onChange={e => setNewUser({ ...newUser, role: e.target.value as UserRole })}
+            options={[
+              { value: 'SUPER_ADMIN', label: 'Super Admin' },
+              { value: 'HOTEL_ADMIN', label: 'Hotel Admin' },
+              { value: 'HOTEL_MANAGER', label: 'Hotel Manager' },
+              { value: 'RECEPTION', label: 'Reception' },
+              { value: 'KITCHEN', label: 'Kitchen' },
+              { value: 'HOUSEKEEPING', label: 'Housekeeping' },
+              { value: 'MAINTENANCE', label: 'Maintenance' },
+            ]}
+          />
+          {newUser.role !== 'SUPER_ADMIN' && (
+            <Select
+              label="Assign to Hotel Property"
+              value={newUser.hotel_id}
+              onChange={e => setNewUser({ ...newUser, hotel_id: e.target.value })}
+              options={hotels.map(h => ({ value: h.id, label: h.name }))}
+            />
+          )}
+        </form>
+      </Modal>
+    </div>
+  );
+}

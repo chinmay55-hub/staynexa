@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Sliders, Check, X, Shield, Info, Building } from 'lucide-react';
 import { Card, CardContent, CardHeader, Button, Select } from '../../components/ui';
-import { hotelService } from '../../services/demoDataService';
+import { hotelService, featureFlagService } from '../../services/demoDataService';
 
 interface FeatureFlagItem {
   key: string;
@@ -26,16 +26,41 @@ const DEFAULT_FLAGS: FeatureFlagItem[] = [
 ];
 
 export default function FeatureFlagsPage() {
-  const [flags, setFlags] = useState<FeatureFlagItem[]>(DEFAULT_FLAGS);
   const [selectedHotel, setSelectedHotel] = useState<string>('GLOBAL');
   const [hotels] = useState(() => hotelService.getAll());
   const [saveFeedback, setSaveFeedback] = useState(false);
+  const [flags, setFlags] = useState<FeatureFlagItem[]>(() => {
+    const scopeMap = featureFlagService.getFlagsForScope('GLOBAL');
+    return DEFAULT_FLAGS.map(f => ({
+      ...f,
+      enabled: scopeMap[f.key] !== undefined ? scopeMap[f.key] : f.enabled,
+    }));
+  });
+
+  // Reload when scope changes
+  React.useEffect(() => {
+    const scopeMap = featureFlagService.getFlagsForScope(selectedHotel);
+    setFlags(DEFAULT_FLAGS.map(f => ({
+      ...f,
+      enabled: scopeMap[f.key] !== undefined ? scopeMap[f.key] : f.enabled,
+    })));
+  }, [selectedHotel]);
 
   const toggleFlag = (key: string) => {
-    setFlags(prev => prev.map(f => f.key === key ? { ...f, enabled: !f.enabled } : f));
+    setFlags(prev => prev.map(f => {
+      if (f.key === key) {
+        const next = !f.enabled;
+        featureFlagService.setFlag(selectedHotel, key, next);
+        return { ...f, enabled: next };
+      }
+      return f;
+    }));
   };
 
   const handleSave = () => {
+    const map: Record<string, boolean> = {};
+    flags.forEach(f => { map[f.key] = f.enabled; });
+    featureFlagService.saveFlagsForScope(selectedHotel, map);
     setSaveFeedback(true);
     setTimeout(() => setSaveFeedback(false), 2000);
   };
