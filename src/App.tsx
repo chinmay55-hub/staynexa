@@ -72,7 +72,7 @@ function AppRoutes() {
   return (
     <Routes>
       {/* Public routes */}
-      <Route path="/login" element={user ? <Navigate to="/" replace /> : <LoginPage />} />
+      <Route path="/login" element={<LoginPage />} />
       <Route path="/guest/:token" element={<GuestPortalPage />} />
 
       {/* Home redirect */}

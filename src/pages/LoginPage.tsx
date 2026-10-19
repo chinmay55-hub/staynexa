@@ -16,7 +16,7 @@ const DEMO_LOGINS = [
 ];
 
 export default function LoginPage() {
-  const { signIn } = useAuth();
+  const { signIn, user, signOut } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -126,6 +126,37 @@ export default function LoginPage() {
               <div className="text-amber-700 text-xs mt-1">Use any quick login below. Password: <code className="bg-amber-100 px-1 rounded">demo123</code></div>
             </div>
           </div>
+
+          {user && (
+            <div className="mb-6 bg-blue-50 border border-blue-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-blue-600 text-white font-bold flex items-center justify-center text-sm shrink-0">
+                  {user.full_name.charAt(0)}
+                </div>
+                <div>
+                  <div className="text-[11px] text-blue-600 font-bold uppercase tracking-wide">Current Session</div>
+                  <div className="text-sm font-bold text-[#1a2744]">{user.full_name}</div>
+                  <div className="text-xs text-stone-500">{user.email} · <span className="font-medium text-blue-700">{user.role}</span></div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => navigate('/')}
+                  className="px-3 py-1.5 text-xs font-semibold bg-white border border-blue-300 text-blue-700 hover:bg-blue-50 rounded-lg transition-colors shadow-sm"
+                >
+                  Go to App
+                </button>
+                <button
+                  type="button"
+                  onClick={() => signOut()}
+                  className="px-3 py-1.5 text-xs font-semibold bg-red-50 border border-red-200 text-red-700 hover:bg-red-100 rounded-lg transition-colors"
+                >
+                  Sign Out
+                </button>
+              </div>
+            </div>
+          )}
 
           <h2 className="text-[#242220] font-display text-2xl font-bold mb-1">Welcome back</h2>
           <p className="text-[#6b6864] text-sm mb-8">Sign in to your StayNexa account</p>

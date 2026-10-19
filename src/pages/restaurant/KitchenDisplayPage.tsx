@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { 
   ChefHat, 
   Clock, 
@@ -8,7 +9,11 @@ import {
   CheckCircle2, 
   Flame, 
   BellRing,
-  ArrowRight
+  ArrowRight,
+  LogOut,
+  ArrowLeft,
+  ChevronDown,
+  UserCheck
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { orderService, hotelService } from '../../services/demoDataService';
@@ -16,7 +21,10 @@ import type { Order, OrderStatus } from '../../types';
 import { Button } from '../../components/ui';
 
 export default function KitchenDisplayPage() {
-  const { user } = useAuth();
+  const { user, signOut, signIn } = useAuth();
+  const navigate = useNavigate();
+  const [roleMenuOpen, setRoleMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const hotelId = user?.hotel_id || 'hotel-001';
   const hotel = hotelService.getById(hotelId);
 
@@ -46,6 +54,32 @@ export default function KitchenDisplayPage() {
   const preparingOrders = orders.filter(o => o.status === 'PREPARING');
   const readyOrders = orders.filter(o => o.status === 'READY');
 
+  // Close role switch dropdown on outside click
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setRoleMenuOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleSwitchRole = async (email: string) => {
+    await signIn(email, 'demo123');
+    setRoleMenuOpen(false);
+    navigate('/');
+  };
+
+  const QUICK_PERSONAS = [
+    { label: 'Hotel Admin', email: 'vikram@grandpalace.com', role: 'HOTEL_ADMIN' },
+    { label: 'Reception', email: 'anjali@grandpalace.com', role: 'RECEPTION' },
+    { label: 'Super Admin', email: 'admin@staynexa.com', role: 'SUPER_ADMIN' },
+    { label: 'Housekeeping', email: 'rekha@grandpalace.com', role: 'HOUSEKEEPING' },
+    { label: 'Maintenance', email: 'ramesh@grandpalace.com', role: 'MAINTENANCE' },
+    { label: 'Kitchen (Current)', email: 'mohan@grandpalace.com', role: 'KITCHEN' },
+  ];
+
   const calcElapsedMins = (createdIso: string) => {
     const diff = currentTime.getTime() - new Date(createdIso).getTime();
     return Math.max(0, Math.floor(diff / 60000));
@@ -67,8 +101,19 @@ export default function KitchenDisplayPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2 bg-white/5 border border-white/10 px-3 py-1.5 rounded-lg text-xs font-mono">
+        <div className="flex items-center gap-3">
+          {/* Back to Dashboard (if non-kitchen role or admin) */}
+          {user?.role && user.role !== 'KITCHEN' && (
+            <button
+              onClick={() => navigate('/')}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white/80 hover:text-white border border-white/10 text-xs font-medium transition-colors"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>Back to Dashboard</span>
+            </button>
+          )}
+
+          <div className="hidden sm:flex items-center gap-2 bg-white/5 border border-white/10 px-3 py-1.5 rounded-lg text-xs font-mono">
             <Clock className="w-4 h-4 text-[#c9a84c]" />
             <span>{currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
           </div>
@@ -83,6 +128,72 @@ export default function KitchenDisplayPage() {
             title="Refresh Orders"
           >
             <RefreshCw className="w-4 h-4" />
+          </button>
+
+          {/* Persona Switcher Dropdown */}
+          <div className="relative" ref={menuRef}>
+            <button
+              onClick={() => setRoleMenuOpen(!roleMenuOpen)}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-white border border-white/10 text-xs font-medium transition-colors"
+            >
+              <UserCheck className="w-3.5 h-3.5 text-[#c9a84c]" />
+              <div className="flex flex-col text-left">
+                <span className="font-semibold">{user?.full_name || 'Chef Mohan'}</span>
+                <span className="text-[10px] text-white/60">{user?.role || 'KITCHEN'}</span>
+              </div>
+              <ChevronDown className="w-3.5 h-3.5 text-white/60 ml-1" />
+            </button>
+
+            {roleMenuOpen && (
+              <div className="absolute right-0 top-full mt-2 w-64 bg-[#1e2025] border border-white/10 rounded-xl shadow-2xl p-2 z-50">
+                <div className="px-3 py-2 border-b border-white/10 mb-1">
+                  <div className="text-[10px] uppercase font-bold text-[#c9a84c] tracking-wider">Switch Persona (Demo)</div>
+                  <div className="text-xs text-white/70">Click to switch views instantly:</div>
+                </div>
+
+                <div className="space-y-1">
+                  {QUICK_PERSONAS.map(p => (
+                    <button
+                      key={p.email}
+                      onClick={() => handleSwitchRole(p.email)}
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs transition-colors text-left ${
+                        user?.email === p.email
+                          ? 'bg-[#c9a84c]/20 text-[#c9a84c] font-bold border border-[#c9a84c]/30'
+                          : 'text-white/80 hover:bg-white/5 hover:text-white'
+                      }`}
+                    >
+                      <span>{p.label}</span>
+                      <span className="text-[10px] text-white/40">{p.role}</span>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="border-t border-white/10 mt-2 pt-1">
+                  <button
+                    onClick={() => {
+                      setRoleMenuOpen(false);
+                      navigate('/login');
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs text-blue-300 hover:bg-blue-500/10 rounded-lg transition-colors"
+                  >
+                    <span>Open Full Login Page...</span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Quick Sign Out button */}
+          <button
+            onClick={() => {
+              signOut();
+              navigate('/login');
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600/20 hover:bg-red-600/30 text-red-300 hover:text-red-100 border border-red-500/30 rounded-lg text-xs font-semibold transition-colors"
+            title="Sign out of current account"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Sign Out</span>
           </button>
         </div>
       </header>
