@@ -106,6 +106,36 @@ CREATE TABLE IF NOT EXISTS profiles (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Schema synchronization for profiles (ensures all required columns and constraints exist even on pre-existing tables)
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS user_id UUID;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS full_name VARCHAR(255) DEFAULT '';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS email VARCHAR(255) DEFAULT '';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS phone VARCHAR(50);
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS role VARCHAR(50) DEFAULT 'RECEPTION';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+-- Backfill user_id from id for any pre-existing rows where user_id is null
+UPDATE public.profiles SET user_id = id WHERE user_id IS NULL;
+
+-- Ensure unique constraint exists on profiles(user_id) for foreign key referencing
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint 
+    WHERE conrelid = 'public.profiles'::regclass AND contype = 'u' 
+      AND conkey = ARRAY[(SELECT attnum FROM pg_attribute WHERE attrelid = 'public.profiles'::regclass AND attname = 'user_id')]
+  ) THEN
+    BEGIN
+      ALTER TABLE public.profiles ADD CONSTRAINT profiles_user_id_key UNIQUE (user_id);
+    EXCEPTION WHEN duplicate_table OR duplicate_object THEN
+      NULL;
+    END;
+  END IF;
+END $$;
+
 -- Operational Departments
 CREATE TABLE IF NOT EXISTS departments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -130,6 +160,15 @@ CREATE TABLE IF NOT EXISTS hotel_memberships (
     created_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(hotel_id, user_id)
 );
+
+-- Schema synchronization for hotel_memberships (ensures all columns exist even on pre-existing tables)
+ALTER TABLE public.hotel_memberships ADD COLUMN IF NOT EXISTS hotel_id UUID;
+ALTER TABLE public.hotel_memberships ADD COLUMN IF NOT EXISTS user_id UUID;
+ALTER TABLE public.hotel_memberships ADD COLUMN IF NOT EXISTS role VARCHAR(50) DEFAULT 'STAFF';
+ALTER TABLE public.hotel_memberships ADD COLUMN IF NOT EXISTS department_id UUID;
+ALTER TABLE public.hotel_memberships ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;
+ALTER TABLE public.hotel_memberships ADD COLUMN IF NOT EXISTS joined_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE public.hotel_memberships ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
 
 -- Granular Permissions Catalog
 CREATE TABLE IF NOT EXISTS permissions (
@@ -536,7 +575,7 @@ CREATE OR REPLACE FUNCTION is_super_admin()
 RETURNS BOOLEAN AS $$
   SELECT EXISTS (
     SELECT 1 FROM profiles 
-    WHERE user_id = auth.uid() 
+    WHERE (user_id = auth.uid() OR id = auth.uid()) 
       AND role = 'SUPER_ADMIN' 
       AND is_active = true
   );
@@ -546,15 +585,18 @@ $$ LANGUAGE sql STABLE SECURITY DEFINER;
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
-  INSERT INTO public.profiles (user_id, email, full_name, role)
+  INSERT INTO public.profiles (id, user_id, email, full_name, role)
   VALUES (
+    NEW.id,
     NEW.id,
     NEW.email,
     COALESCE(NEW.raw_user_meta_data->>'full_name', split_part(NEW.email, '@', 1)),
     COALESCE(NEW.raw_app_meta_data->>'role', 'RECEPTION')
   )
-  ON CONFLICT (user_id) DO UPDATE
-  SET email = EXCLUDED.email;
+  ON CONFLICT (id) DO UPDATE
+  SET email = EXCLUDED.email,
+      user_id = COALESCE(public.profiles.user_id, EXCLUDED.user_id),
+      full_name = COALESCE(public.profiles.full_name, EXCLUDED.full_name);
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -643,18 +685,21 @@ CREATE POLICY profiles_read_policy ON profiles
     FOR SELECT USING (
         is_super_admin() 
         OR user_id = auth.uid()
+        OR id = auth.uid()
         OR EXISTS (
             SELECT 1 FROM hotel_memberships hm1
             JOIN hotel_memberships hm2 ON hm1.hotel_id = hm2.hotel_id
-            WHERE hm1.user_id = auth.uid() AND hm2.user_id = profiles.user_id AND hm1.is_active = true
+            WHERE hm1.user_id = auth.uid() 
+              AND (hm2.user_id = profiles.user_id OR hm2.user_id = profiles.id) 
+              AND hm1.is_active = true
         )
     );
 DROP POLICY IF EXISTS profiles_update_policy ON profiles;
 CREATE POLICY profiles_update_policy ON profiles
-    FOR UPDATE USING (is_super_admin() OR user_id = auth.uid());
+    FOR UPDATE USING (is_super_admin() OR user_id = auth.uid() OR id = auth.uid());
 DROP POLICY IF EXISTS profiles_admin_insert ON profiles;
 CREATE POLICY profiles_admin_insert ON profiles
-    FOR INSERT WITH CHECK (is_super_admin() OR user_id = auth.uid());
+    FOR INSERT WITH CHECK (is_super_admin() OR user_id = auth.uid() OR id = auth.uid());
 
 -- 7. Hotel Memberships Policy
 DROP POLICY IF EXISTS memberships_read_policy ON hotel_memberships;
@@ -665,7 +710,9 @@ CREATE POLICY memberships_write_policy ON hotel_memberships
     FOR ALL USING (
         is_super_admin() 
         OR (hotel_id = auth_hotel_id() AND EXISTS (
-            SELECT 1 FROM profiles WHERE user_id = auth.uid() AND role IN ('HOTEL_ADMIN', 'HOTEL_MANAGER')
+            SELECT 1 FROM profiles 
+            WHERE (user_id = auth.uid() OR id = auth.uid()) 
+              AND role IN ('HOTEL_ADMIN', 'HOTEL_MANAGER')
         ))
     );
 

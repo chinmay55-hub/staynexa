@@ -152,6 +152,19 @@ describe('STAYNEXA SECURITY & SUPABASE INTEGRATION AUDIT SUITE', () => {
       expect(dropPolicyCount).toBe(createPolicyCount);
     });
 
+    it('should explicitly synchronize user_id column on profiles before helper functions', () => {
+      const alterProfilesUserIdx = sqlContent.indexOf('ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS user_id UUID;');
+      const isSuperAdminIdx = sqlContent.indexOf('CREATE OR REPLACE FUNCTION is_super_admin()');
+
+      expect(alterProfilesUserIdx).toBeGreaterThan(-1);
+      expect(alterProfilesUserIdx).toBeLessThan(isSuperAdminIdx);
+      expect(sqlContent).toContain('UPDATE public.profiles SET user_id = id WHERE user_id IS NULL;');
+    });
+
+    it('should support dual user_id and id matching in is_super_admin() for maximum compatibility', () => {
+      expect(sqlContent).toContain('(user_id = auth.uid() OR id = auth.uid())');
+    });
+
     it('should enable Row-Level Security across all core domain tables', () => {
       const requiredRlsTables = [
         'hotels', 'hotel_domains', 'hotel_branding', 'hotel_settings', 'hotel_policies',
