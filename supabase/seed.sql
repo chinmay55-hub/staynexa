@@ -134,8 +134,8 @@ ON CONFLICT (id) DO UPDATE SET
 -- ─── 6. Room Types ───────────────────────────────────────────────────────────
 INSERT INTO room_types (id, hotel_id, name, code, description, base_rate, max_occupancy, max_adults, max_children, amenities)
 VALUES
-('00000000-0000-0000-0002-000000000001', '00000000-0000-0000-0000-000000000001', 'Superior Room', 'SUP', 'Spacious room with king bed and city view', 4500.00, 2, 2, 1, '["AC", "WiFi", "TV", "Coffee Maker", "Safe"]'),
-('00000000-0000-0000-0002-000000000002', '00000000-0000-0000-0000-000000000001', 'Deluxe Palace Suite', 'DLX', 'Executive suite with private balcony and marble bath', 7500.00, 3, 2, 2, '["AC", "High-speed WiFi", "Smart TV", "Mini Bar", "Bathtub", "Safe", "Work Desk"]')
+('00000000-0000-0000-0002-000000000001', '00000000-0000-0000-0000-000000000001', 'Superior Room', 'SUP', 'Spacious room with king bed and city view', 4500.00, 2, 2, 1, ARRAY['AC', 'WiFi', 'TV', 'Coffee Maker', 'Safe']),
+('00000000-0000-0000-0002-000000000002', '00000000-0000-0000-0000-000000000001', 'Deluxe Palace Suite', 'DLX', 'Executive suite with private balcony and marble bath', 7500.00, 3, 2, 2, ARRAY['AC', 'High-speed WiFi', 'Smart TV', 'Mini Bar', 'Bathtub', 'Safe', 'Work Desk'])
 ON CONFLICT (id) DO UPDATE SET
   name = EXCLUDED.name,
   code = EXCLUDED.code,

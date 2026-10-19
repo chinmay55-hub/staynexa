@@ -199,5 +199,11 @@ describe('STAYNEXA SECURITY & SUPABASE INTEGRATION AUDIT SUITE', () => {
       expect(seedContent).toContain('ON CONFLICT (id) DO UPDATE SET');
       expect(seedContent).toContain('legal_name = EXCLUDED.legal_name');
     });
+
+    it('should strictly use PostgreSQL ARRAY syntax instead of JSON array strings', () => {
+      // Must not contain JSON-style stringified arrays like '["..."]'
+      expect(seedContent).not.toMatch(/'\[.*\]'/);
+      expect(seedContent).toContain("ARRAY['AC', 'WiFi', 'TV'");
+    });
   });
 });
