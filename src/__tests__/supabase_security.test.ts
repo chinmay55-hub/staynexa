@@ -180,4 +180,24 @@ describe('STAYNEXA SECURITY & SUPABASE INTEGRATION AUDIT SUITE', () => {
       }
     });
   });
+
+  // ─── 5. POSTGRESQL SEED DATA SELF-HEALING & COMPATIBILITY AUDIT ───────────
+  describe('PostgreSQL Seed Data Self-Healing & Compatibility Audit', () => {
+    const seedPath = path.resolve(process.cwd(), 'supabase/seed.sql');
+    const seedContent = fs.readFileSync(seedPath, 'utf-8');
+
+    it('should synchronize hotels.legal_name and other columns before INSERT', () => {
+      const legalNameIdx = seedContent.indexOf('ALTER TABLE public.hotels ADD COLUMN IF NOT EXISTS legal_name VARCHAR(255);');
+      const insertHotelIdx = seedContent.indexOf('INSERT INTO hotels (id, name, legal_name');
+
+      expect(legalNameIdx).toBeGreaterThan(-1);
+      expect(insertHotelIdx).toBeGreaterThan(-1);
+      expect(legalNameIdx).toBeLessThan(insertHotelIdx);
+    });
+
+    it('should use idempotent upserts (ON CONFLICT DO UPDATE) for deterministic seeding', () => {
+      expect(seedContent).toContain('ON CONFLICT (id) DO UPDATE SET');
+      expect(seedContent).toContain('legal_name = EXCLUDED.legal_name');
+    });
+  });
 });
