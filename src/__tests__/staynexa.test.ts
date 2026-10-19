@@ -12,10 +12,12 @@ import {
   subscriptionService,
   featureFlagService,
   menuService,
-  serviceRequestService
+  serviceRequestService,
+  notificationService
 } from '../services/demoDataService';
 import { audioService } from '../services/audioService';
 import { paymentService } from '../services/paymentService';
+import { realtimeSync } from '../services/realtimeSync';
 import { parseDatabaseError } from '../lib/errorHandler';
 
 describe('STAYNEXA CORE HOTEL OPERATING SYSTEM TEST SUITE', () => {
@@ -464,6 +466,131 @@ describe('STAYNEXA CORE HOTEL OPERATING SYSTEM TEST SUITE', () => {
       expect(settings).toBeDefined();
       expect(settings?.google_review_url).toBeDefined();
       expect(settings?.google_review_url).toContain('https://search.google.com/local/writereview');
+    });
+  });
+
+  // ─── 14. REALTIME STATE SYNCHRONIZATION & EVENT BUS ────────────────────────
+  describe('Realtime State Synchronization Pipeline', () => {
+    it('should emit NEW_ORDER and generate desk notification when guest places an order', () => {
+      let eventPayload: any = null;
+      const unsubscribe = realtimeSync.subscribe('NEW_ORDER', (payload) => {
+        eventPayload = payload;
+      });
+
+      const order = orderService.create({
+        hotel_id: 'hotel-001',
+        room_id: 'room-001',
+        guest_id: 'guest-001',
+        status: 'PENDING',
+        type: 'ROOM_SERVICE',
+        subtotal: 450,
+        tax_amount: 22.5,
+        total: 472.5,
+        charge_to_room: true,
+        items: [
+          {
+            menu_item_id: 'mi-001',
+            name: 'Paneer Butter Masala',
+            quantity: 1,
+            unit_price: 450,
+            tax_percent: 5,
+            total: 472.5,
+          }
+        ]
+      });
+
+      expect(eventPayload).not.toBeNull();
+      expect(eventPayload.order.id).toBe(order.id);
+      expect(eventPayload.order.status).toBe('PENDING');
+
+      // Verify unread desk notification was created
+      const unreadCount = notificationService.getUnreadCount(undefined, 'hotel-001');
+      expect(unreadCount).toBeGreaterThan(0);
+
+      const latestNotification = notificationService.getAll(undefined, 'hotel-001')[0];
+      expect(latestNotification.type).toBe('ORDER');
+      expect(latestNotification.title).toContain('Room');
+
+      unsubscribe();
+    });
+
+    it('should emit ORDER_STATUS_CHANGED when kitchen advances order status', () => {
+      let statusEvent: any = null;
+      const unsubscribe = realtimeSync.subscribe('ORDER_STATUS_CHANGED', (payload) => {
+        statusEvent = payload;
+      });
+
+      const activeOrders = orderService.getActive('hotel-001');
+      expect(activeOrders.length).toBeGreaterThan(0);
+      const targetOrder = activeOrders[0];
+
+      orderService.updateStatus(targetOrder.id, 'PREPARING');
+
+      expect(statusEvent).not.toBeNull();
+      expect(statusEvent.orderId).toBe(targetOrder.id);
+      expect(statusEvent.status).toBe('PREPARING');
+
+      unsubscribe();
+    });
+
+    it('should emit NEW_SERVICE_REQUEST and auto-provision HousekeepingTask when guest requests towels/cleaning', () => {
+      let requestEvent: any = null;
+      let taskEvent: any = null;
+
+      const unsubReq = realtimeSync.subscribe('NEW_SERVICE_REQUEST', (payload) => {
+        requestEvent = payload;
+      });
+      const unsubTask = realtimeSync.subscribe('NEW_HOUSEKEEPING_TASK', (payload) => {
+        taskEvent = payload;
+      });
+
+      const req = serviceRequestService.create({
+        hotel_id: 'hotel-001',
+        room_id: 'room-001',
+        guest_id: 'guest-001',
+        title: 'Extra Towels and Linens',
+        description: 'Need 2 fresh bath towels for Room 101',
+        priority: 'HIGH',
+        status: 'PENDING',
+      });
+
+      expect(requestEvent).not.toBeNull();
+      expect(requestEvent.request.id).toBe(req.id);
+
+      // Verify auto-provisioned HousekeepingTask
+      expect(taskEvent).not.toBeNull();
+      expect(taskEvent.task.room_id).toBe('room-001');
+      expect(taskEvent.task.priority).toBe('HIGH');
+      expect(taskEvent.task.notes).toContain('Extra Towels and Linens');
+
+      unsubReq();
+      unsubTask();
+    });
+
+    it('should emit HOUSEKEEPING_TASK_UPDATED and update room status when task is completed', () => {
+      let updateEvent: any = null;
+      const unsubscribe = realtimeSync.subscribe('HOUSEKEEPING_TASK_UPDATED', (payload) => {
+        updateEvent = payload;
+      });
+
+      const tasks = housekeepingService.getTasks('hotel-001');
+      expect(tasks.length).toBeGreaterThan(0);
+      const task = tasks[0];
+
+      housekeepingService.updateTask(task.id, {
+        status: 'COMPLETED',
+        completed_at: new Date().toISOString(),
+      });
+
+      expect(updateEvent).not.toBeNull();
+      expect(updateEvent.taskId).toBe(task.id);
+      expect(updateEvent.task.status).toBe('COMPLETED');
+
+      // Verify room housekeeping status updated to CLEAN
+      const room = roomService.getById(task.room_id);
+      expect(room?.housekeeping_status).toBe('CLEAN');
+
+      unsubscribe();
     });
   });
 });

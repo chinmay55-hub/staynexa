@@ -19,6 +19,7 @@ import {
 import { useAuth } from '../../contexts/AuthContext';
 import { orderService, hotelService } from '../../services/demoDataService';
 import { audioService } from '../../services/audioService';
+import { realtimeSync } from '../../services/realtimeSync';
 import type { Order, OrderStatus } from '../../types';
 import { Button } from '../../components/ui';
 
@@ -32,6 +33,7 @@ export default function KitchenDisplayPage() {
 
   const [orders, setOrders] = useState<Order[]>(() => orderService.getAll(hotelId));
   const [currentTime, setCurrentTime] = useState(() => new Date());
+  const [liveAlertBanner, setLiveAlertBanner] = useState<{ id: string; message: string } | null>(null);
 
   // KDS Sound State
   const [isMuted, setIsMuted] = useState(() => audioService.isAudioMuted());
@@ -52,6 +54,47 @@ export default function KitchenDisplayPage() {
   const refreshOrders = () => {
     setOrders([...orderService.getAll(hotelId)]);
   };
+
+  // Realtime WebSocket & Cross-Tab State Synchronization
+  useEffect(() => {
+    const disconnectSupabase = realtimeSync.connectSupabaseHotelChannel(hotelId);
+
+    const unsubNewOrder = realtimeSync.subscribe('NEW_ORDER', ({ order }) => {
+      if (order.hotel_id === hotelId) {
+        setOrders(prev => {
+          if (prev.some(o => o.id === order.id)) return prev;
+          return [order, ...prev];
+        });
+        audioService.playChime();
+        const roomNum = order.room?.number || order.room_id || 'Guest Portal';
+        setLiveAlertBanner({
+          id: order.id,
+          message: `🔔 New Order #${order.id.slice(0, 8)} from Room ${roomNum} (${order.items.length} item${order.items.length > 1 ? 's' : ''})`,
+        });
+      }
+    });
+
+    const unsubOrderStatus = realtimeSync.subscribe('ORDER_STATUS_CHANGED', ({ orderId, status, order }) => {
+      setOrders(prev =>
+        prev.map(o => (o.id === orderId ? { ...o, ...order, status } : o))
+      );
+    });
+
+    return () => {
+      disconnectSupabase();
+      unsubNewOrder();
+      unsubOrderStatus();
+    };
+  }, [hotelId]);
+
+  // Auto-dismiss live alert banner after 8 seconds
+  useEffect(() => {
+    if (!liveAlertBanner) return;
+    const timeout = setTimeout(() => {
+      setLiveAlertBanner(null);
+    }, 8000);
+    return () => clearTimeout(timeout);
+  }, [liveAlertBanner]);
 
   const handleAdvanceStatus = (orderId: string, nextStatus: OrderStatus) => {
     orderService.updateStatus(orderId, nextStatus);
@@ -271,6 +314,22 @@ export default function KitchenDisplayPage() {
           </button>
         </div>
       </header>
+
+      {/* Live Incoming Order Alert Banner */}
+      {liveAlertBanner && (
+        <div className="bg-amber-500/20 border-b border-amber-500/40 px-6 py-2.5 flex items-center justify-between text-amber-200 animate-pulse">
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <Flame className="w-4 h-4 text-amber-400" />
+            <span>{liveAlertBanner.message}</span>
+          </div>
+          <button 
+            onClick={() => setLiveAlertBanner(null)} 
+            className="p-1 hover:bg-white/10 rounded text-xs text-white/70 hover:text-white"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* 4-Column Order Dispatch Grid */}
       <div className="flex-1 p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 overflow-y-auto">

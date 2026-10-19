@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   BellRing, 
   Search, 
@@ -19,6 +19,7 @@ import {
   staffService,
   activityLogService
 } from '../../services/demoDataService';
+import { realtimeSync } from '../../services/realtimeSync';
 import type { ServiceRequest, RequestStatus, Priority } from '../../types';
 import { 
   Card, 
@@ -43,6 +44,32 @@ export default function RequestsPage() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [priorityFilter, setPriorityFilter] = useState<string>('ALL');
+
+  // Realtime WebSocket & Cross-Tab State Synchronization
+  useEffect(() => {
+    const disconnectSupabase = realtimeSync.connectSupabaseHotelChannel(hotelId);
+
+    const unsubNewRequest = realtimeSync.subscribe('NEW_SERVICE_REQUEST', ({ request }) => {
+      if (request.hotel_id === hotelId) {
+        setRequests(prev => {
+          if (prev.some(r => r.id === request.id)) return prev;
+          return [request, ...prev];
+        });
+      }
+    });
+
+    const unsubStatusChange = realtimeSync.subscribe('REQUEST_STATUS_CHANGED', ({ requestId, status, request }) => {
+      setRequests(prev =>
+        prev.map(r => (r.id === requestId ? { ...r, ...request, status } : r))
+      );
+    });
+
+    return () => {
+      disconnectSupabase();
+      unsubNewRequest();
+      unsubStatusChange();
+    };
+  }, [hotelId]);
 
   // New Request Modal state
   const [isAddOpen, setIsAddOpen] = useState(false);

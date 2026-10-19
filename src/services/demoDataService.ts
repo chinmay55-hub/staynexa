@@ -22,6 +22,14 @@ import {
   DEMO_SUBSCRIPTIONS,
 } from '../data/demo';
 
+import { realtimeSync } from './realtimeSync';
+import { isDemoMode, supabase } from '../lib/supabase';
+import { 
+  supabaseOrderService, 
+  supabaseServiceRequestService, 
+  supabaseHousekeepingService 
+} from './supabaseService';
+
 // Also re-export demo constants for convenience
 export {
   DEMO_HOTELS, DEMO_HOTEL_BRANDING, DEMO_HOTEL_SETTINGS,
@@ -334,15 +342,54 @@ export const orderService = {
   getActive: (hotelId: string): Order[] =>
     orders.filter(o => o.hotel_id === hotelId && !['DELIVERED', 'CANCELLED'].includes(o.status)),
   create: (data: Omit<Order, 'id' | 'created_at' | 'updated_at' | 'items'> & { items: Omit<OrderItem, 'id' | 'order_id'>[] }): Order => {
+    const orderId = uuid();
+    const room = rooms.find(r => r.id === data.room_id);
+    const guest = guests.find(g => g.id === data.guest_id);
     const order: Order = {
       ...data,
-      id: uuid(),
+      id: orderId,
       created_at: now(),
       updated_at: now(),
-      items: data.items.map(item => ({ ...item, id: uuid(), order_id: '' })),
+      room,
+      guest,
+      items: data.items.map(item => ({ ...item, id: uuid(), order_id: orderId })),
     };
-    order.items = order.items.map(item => ({ ...item, order_id: order.id }));
-    orders.push(order);
+    orders.unshift(order);
+
+    // Create Notification for Desk & KDS
+    const notif: Notification = {
+      id: uuid(),
+      hotel_id: data.hotel_id,
+      type: 'ORDER',
+      title: `New In-Room Order: Room ${room?.number || 'Portal'}`,
+      message: `${order.items.map(i => `${i.quantity}x ${i.name}`).join(', ')} (Total: ₹${order.total})`,
+      is_read: false,
+      link: '/kds',
+      created_at: now(),
+    };
+    notifications.unshift(notif);
+
+    // Create Activity Log
+    activityLogs.unshift({
+      id: uuid(),
+      hotel_id: data.hotel_id,
+      actor_name: guest ? `${guest.first_name} ${guest.last_name}` : 'Guest QR Portal',
+      action: 'ORDER_PLACED',
+      entity_type: 'ORDER',
+      entity_id: order.id,
+      metadata: { total: order.total, room: room?.number, items_count: order.items.length },
+      created_at: now(),
+    });
+
+    // Write to Supabase in production mode
+    if (!isDemoMode() && supabase) {
+      supabaseOrderService.create(data).catch(err => console.error('Supabase order write error:', err));
+    }
+
+    // Broadcast Realtime Event
+    realtimeSync.emit('NEW_ORDER', { order });
+    realtimeSync.emit('NEW_NOTIFICATION', { notification: notif });
+
     return order;
   },
   updateStatus: (id: string, status: Order['status']): Order | undefined => {
@@ -354,7 +401,16 @@ export const orderService = {
     if (status === 'READY') timeFields.ready_at = now();
     if (status === 'DELIVERED') timeFields.delivered_at = now();
     orders[idx] = { ...orders[idx], status, ...timeFields, updated_at: now() };
-    return orders[idx];
+    const updated = orders[idx];
+
+    // Write to Supabase in production mode
+    if (!isDemoMode() && supabase) {
+      supabaseOrderService.updateStatus(id, status).catch(err => console.error('Supabase order update error:', err));
+    }
+
+    // Broadcast Realtime Event
+    realtimeSync.emit('ORDER_STATUS_CHANGED', { orderId: id, status, order: updated });
+    return updated;
   },
 };
 
@@ -376,11 +432,30 @@ export const housekeepingService = {
       const newStatus = data.status === 'INSPECTED' ? 'INSPECTED' : 'CLEAN';
       roomService.update(task.room_id, { housekeeping_status: newStatus });
     }
-    return housekeepingTasks[idx];
+    const updated = housekeepingTasks[idx];
+
+    if (!isDemoMode() && supabase) {
+      supabaseHousekeepingService.updateTask(id, data).catch(err => console.error('Supabase housekeeping update error:', err));
+    }
+
+    realtimeSync.emit('HOUSEKEEPING_TASK_UPDATED', { taskId: id, task: updated });
+    return updated;
   },
   createTask: (data: Omit<HousekeepingTask, 'id' | 'created_at'>): HousekeepingTask => {
-    const task: HousekeepingTask = { ...data, id: uuid(), created_at: now() };
-    housekeepingTasks.push(task);
+    const room = rooms.find(r => r.id === data.room_id);
+    const task: HousekeepingTask = {
+      ...data,
+      id: uuid(),
+      room,
+      created_at: now(),
+    };
+    housekeepingTasks.unshift(task);
+
+    if (!isDemoMode() && supabase) {
+      supabaseHousekeepingService.createTask(data).catch(err => console.error('Supabase housekeeping task write error:', err));
+    }
+
+    realtimeSync.emit('NEW_HOUSEKEEPING_TASK', { task });
     return task;
   },
 };
@@ -417,15 +492,89 @@ export const serviceRequestService = {
     })),
   getServices: (hotelId: string): HotelService[] => hotelServices.filter(s => s.hotel_id === hotelId && s.is_available),
   create: (data: Omit<ServiceRequest, 'id' | 'created_at' | 'updated_at'>): ServiceRequest => {
-    const req: ServiceRequest = { ...data, id: uuid(), created_at: now(), updated_at: now() };
-    serviceRequests.push(req);
+    const room = rooms.find(rm => rm.id === data.room_id);
+    const guest = guests.find(g => g.id === data.guest_id);
+    const service = hotelServices.find(s => s.id === data.service_id);
+    const req: ServiceRequest = {
+      ...data,
+      id: uuid(),
+      room,
+      guest,
+      service,
+      created_at: now(),
+      updated_at: now(),
+    };
+    serviceRequests.unshift(req);
+
+    // Auto-create Housekeeping Task if request is housekeeping-related
+    const isHousekeepingCategory = service?.category === 'HOUSEKEEPING' || 
+      data.title.toLowerCase().includes('towel') || 
+      data.title.toLowerCase().includes('clean') ||
+      data.title.toLowerCase().includes('linen');
+
+    if (isHousekeepingCategory && data.room_id) {
+      const task = housekeepingService.createTask({
+        hotel_id: data.hotel_id,
+        room_id: data.room_id,
+        reservation_id: data.reservation_id,
+        type: 'STAYOVER_CLEAN',
+        status: 'PENDING',
+        priority: (data.priority as any) || 'HIGH',
+        notes: `Guest Request: ${data.title} - ${data.description || ''}`,
+      });
+      realtimeSync.emit('NEW_HOUSEKEEPING_TASK', { task });
+    }
+
+    // Create Notification for Front Desk
+    const notif: Notification = {
+      id: uuid(),
+      hotel_id: data.hotel_id,
+      type: 'REQUEST',
+      title: `New Service Request: Room ${room?.number || 'Portal'}`,
+      message: `${req.title} (${req.priority} Priority)`,
+      is_read: false,
+      link: '/reception/requests',
+      created_at: now(),
+    };
+    notifications.unshift(notif);
+
+    // Create Activity Log
+    activityLogs.unshift({
+      id: uuid(),
+      hotel_id: data.hotel_id,
+      actor_name: guest ? `${guest.first_name} ${guest.last_name}` : 'Guest QR Portal',
+      action: 'SERVICE_REQUEST_CREATED',
+      entity_type: 'SERVICE_REQUEST',
+      entity_id: req.id,
+      metadata: { title: req.title, priority: req.priority, room: room?.number },
+      created_at: now(),
+    });
+
+    // Write to Supabase in production mode
+    if (!isDemoMode() && supabase) {
+      supabaseServiceRequestService.create(data).catch(err => console.error('Supabase service request write error:', err));
+    }
+
+    // Broadcast Realtime Event
+    realtimeSync.emit('NEW_SERVICE_REQUEST', { request: req });
+    realtimeSync.emit('NEW_NOTIFICATION', { notification: notif });
+
     return req;
   },
   update: (id: string, data: Partial<ServiceRequest>): ServiceRequest | undefined => {
     const idx = serviceRequests.findIndex(r => r.id === id);
     if (idx === -1) return undefined;
     serviceRequests[idx] = { ...serviceRequests[idx], ...data, updated_at: now() };
-    return serviceRequests[idx];
+    const updated = serviceRequests[idx];
+
+    // Write to Supabase in production mode
+    if (!isDemoMode() && supabase) {
+      supabaseServiceRequestService.update(id, data).catch(err => console.error('Supabase service request update error:', err));
+    }
+
+    // Broadcast Realtime Event
+    realtimeSync.emit('REQUEST_STATUS_CHANGED', { requestId: id, status: data.status || updated.status, request: updated });
+    return updated;
   },
 };
 
@@ -445,20 +594,30 @@ export const staffService = {
 // ─── Notifications ────────────────────────────────────────────────────────────
 
 export const notificationService = {
-  getAll: (userId: string): Notification[] =>
-    notifications.filter(n => n.user_id === userId || !n.user_id).sort((a, b) =>
+  getAll: (userId?: string, hotelId?: string): Notification[] =>
+    notifications.filter(n => {
+      const matchesUser = !userId || n.user_id === userId || !n.user_id;
+      const matchesHotel = !hotelId || !n.hotel_id || n.hotel_id === hotelId;
+      return matchesUser && matchesHotel;
+    }).sort((a, b) =>
       new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     ),
-  getUnreadCount: (userId: string): number =>
-    notifications.filter(n => (n.user_id === userId || !n.user_id) && !n.is_read).length,
+  getUnreadCount: (userId?: string, hotelId?: string): number =>
+    notifications.filter(n => {
+      const matchesUser = !userId || n.user_id === userId || !n.user_id;
+      const matchesHotel = !hotelId || !n.hotel_id || n.hotel_id === hotelId;
+      return matchesUser && matchesHotel && !n.is_read;
+    }).length,
   markRead: (id: string): void => {
     const idx = notifications.findIndex(n => n.id === id);
     if (idx !== -1) notifications[idx] = { ...notifications[idx], is_read: true };
   },
-  markAllRead: (userId: string): void => {
-    notifications = notifications.map(n =>
-      (n.user_id === userId || !n.user_id) ? { ...n, is_read: true } : n
-    );
+  markAllRead: (userId?: string, hotelId?: string): void => {
+    notifications = notifications.map(n => {
+      const matchesUser = !userId || n.user_id === userId || !n.user_id;
+      const matchesHotel = !hotelId || !n.hotel_id || n.hotel_id === hotelId;
+      return (matchesUser && matchesHotel) ? { ...n, is_read: true } : n;
+    });
   },
 };
 

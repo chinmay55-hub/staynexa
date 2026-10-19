@@ -5,6 +5,7 @@ import { Search, Bell, ChevronDown, LogOut, User, Settings, FlaskConical } from 
 import clsx from 'clsx';
 import { useAuth } from '../../contexts/AuthContext';
 import { notificationService, hotelService } from '../../services/demoDataService';
+import { realtimeSync } from '../../services/realtimeSync';
 import type { Notification } from '../../types';
 import { NotificationPanel } from './NotificationPanel';
 import { GlobalSearch } from './GlobalSearch';
@@ -76,15 +77,26 @@ export function Header({ isDemoMode = true }: HeaderProps) {
   // Load notifications
   function loadNotifications() {
     if (!user) return;
-    const notifs = notificationService.getAll(user.id);
+    const notifs = notificationService.getAll(user.id, user.hotel_id);
     setNotifications(notifs);
-    setUnreadCount(notificationService.getUnreadCount(user.id));
+    setUnreadCount(notificationService.getUnreadCount(user.id, user.hotel_id));
   }
 
   useEffect(() => {
     loadNotifications();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]);
+  }, [user?.id, user?.hotel_id]);
+
+  // Realtime notification sync
+  useEffect(() => {
+    const unsub = realtimeSync.subscribe('NEW_NOTIFICATION', ({ notification }) => {
+      if (!user || !notification.hotel_id || notification.hotel_id === user.hotel_id) {
+        loadNotifications();
+      }
+    });
+    return () => unsub();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, user?.hotel_id]);
 
   // Close user menu on outside click
   useEffect(() => {

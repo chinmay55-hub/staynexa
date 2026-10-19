@@ -33,6 +33,7 @@ import {
   serviceRequestService, 
   folioService 
 } from '../../services/demoDataService';
+import { realtimeSync } from '../../services/realtimeSync';
 import { paymentService } from '../../services/paymentService';
 import type { 
   Hotel, 
@@ -152,6 +153,31 @@ export default function GuestPortalPage() {
 
     setIsLoading(false);
   }, [token]);
+
+  // Realtime Status Synchronization for Guest Portal
+  useEffect(() => {
+    if (!hotel) return;
+
+    const disconnectSupabase = realtimeSync.connectSupabaseHotelChannel(hotel.id);
+
+    const unsubOrderStatus = realtimeSync.subscribe('ORDER_STATUS_CHANGED', ({ orderId, status, order }) => {
+      setMyOrders(prev =>
+        prev.map(o => (o.id === orderId ? { ...o, ...order, status } : o))
+      );
+    });
+
+    const unsubRequestStatus = realtimeSync.subscribe('REQUEST_STATUS_CHANGED', ({ requestId, status, request }) => {
+      setMyRequests(prev =>
+        prev.map(r => (r.id === requestId ? { ...r, ...request, status } : r))
+      );
+    });
+
+    return () => {
+      disconnectSupabase();
+      unsubOrderStatus();
+      unsubRequestStatus();
+    };
+  }, [hotel]);
 
   const branding = hotel ? hotelService.getBranding(hotel.id) : null;
   const settings = hotel ? hotelService.getSettings(hotel.id) : null;

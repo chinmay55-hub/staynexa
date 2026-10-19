@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   BedDouble, 
@@ -13,7 +13,8 @@ import {
   Clock, 
   AlertCircle,
   ArrowRight,
-  Sparkles
+  Sparkles,
+  X
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { 
@@ -24,6 +25,7 @@ import {
   orderService, 
   hotelService 
 } from '../../services/demoDataService';
+import { realtimeSync } from '../../services/realtimeSync';
 import { 
   Card, 
   CardContent, 
@@ -42,11 +44,86 @@ export default function ReceptionDashboard() {
   const hotelId = user?.hotel_id || 'hotel-001';
   const hotel = hotelService.getById(hotelId);
 
-  const stats = analyticsService.getHotelStats(hotelId);
-  const arrivals = reservationService.getTodayArrivals(hotelId);
-  const departures = reservationService.getTodayDepartures(hotelId);
-  const recentRequests = serviceRequestService.getAll(hotelId).slice(0, 5);
-  const activeOrders = orderService.getActive(hotelId).slice(0, 5);
+  const [stats, setStats] = useState(() => analyticsService.getHotelStats(hotelId));
+  const [arrivals, setArrivals] = useState(() => reservationService.getTodayArrivals(hotelId));
+  const [departures, setDepartures] = useState(() => reservationService.getTodayDepartures(hotelId));
+  const [recentRequests, setRecentRequests] = useState(() => serviceRequestService.getAll(hotelId).slice(0, 5));
+  const [activeOrders, setActiveOrders] = useState(() => orderService.getActive(hotelId).slice(0, 5));
+  const [deskAlert, setDeskAlert] = useState<{ id: string; title: string; subtitle: string; type: 'ORDER' | 'REQUEST' } | null>(null);
+
+  // Realtime WebSocket & Cross-Tab State Synchronization
+  useEffect(() => {
+    const disconnectSupabase = realtimeSync.connectSupabaseHotelChannel(hotelId);
+
+    const refreshData = () => {
+      setStats(analyticsService.getHotelStats(hotelId));
+      setRecentRequests(serviceRequestService.getAll(hotelId).slice(0, 5));
+      setActiveOrders(orderService.getActive(hotelId).slice(0, 5));
+      setArrivals(reservationService.getTodayArrivals(hotelId));
+      setDepartures(reservationService.getTodayDepartures(hotelId));
+    };
+
+    const unsubNewOrder = realtimeSync.subscribe('NEW_ORDER', ({ order }) => {
+      if (order.hotel_id === hotelId) {
+        refreshData();
+        const roomNum = order.room?.number || order.room_id || 'Guest Portal';
+        setDeskAlert({
+          id: order.id,
+          type: 'ORDER',
+          title: `New In-Room Dining Order: Room ${roomNum}`,
+          subtitle: `${order.items.map(i => `${i.quantity}x ${i.name}`).join(', ')} · Total: ₹${order.total}`,
+        });
+      }
+    });
+
+    const unsubOrderStatus = realtimeSync.subscribe('ORDER_STATUS_CHANGED', () => {
+      refreshData();
+    });
+
+    const unsubNewRequest = realtimeSync.subscribe('NEW_SERVICE_REQUEST', ({ request }) => {
+      if (request.hotel_id === hotelId) {
+        refreshData();
+        const roomNum = request.room?.number || request.room_id || 'Guest Portal';
+        setDeskAlert({
+          id: request.id,
+          type: 'REQUEST',
+          title: `New Service Request: Room ${roomNum}`,
+          subtitle: `${request.title} (${request.priority} Priority)`,
+        });
+      }
+    });
+
+    const unsubRequestStatus = realtimeSync.subscribe('REQUEST_STATUS_CHANGED', () => {
+      refreshData();
+    });
+
+    const unsubHousekeeping = realtimeSync.subscribe('NEW_HOUSEKEEPING_TASK', () => {
+      refreshData();
+    });
+
+    const unsubHousekeepingUpdate = realtimeSync.subscribe('HOUSEKEEPING_TASK_UPDATED', () => {
+      refreshData();
+    });
+
+    return () => {
+      disconnectSupabase();
+      unsubNewOrder();
+      unsubOrderStatus();
+      unsubNewRequest();
+      unsubRequestStatus();
+      unsubHousekeeping();
+      unsubHousekeepingUpdate();
+    };
+  }, [hotelId]);
+
+  // Auto-dismiss desk alert after 8 seconds
+  useEffect(() => {
+    if (!deskAlert) return;
+    const timer = setTimeout(() => {
+      setDeskAlert(null);
+    }, 8000);
+    return () => clearTimeout(timer);
+  }, [deskAlert]);
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
@@ -81,6 +158,34 @@ export default function ReceptionDashboard() {
           </Button>
         </div>
       </div>
+
+      {/* Live Front Desk Realtime Alert Banner */}
+      {deskAlert && (
+        <div className={`p-4 rounded-xl border flex items-center justify-between shadow-xs transition-all ${
+          deskAlert.type === 'ORDER' 
+            ? 'bg-amber-500/10 border-amber-500/30 text-amber-900' 
+            : 'bg-[#c9a84c]/10 border-[#c9a84c]/30 text-stone-900'
+        }`}>
+          <div className="flex items-center gap-3">
+            <div className={`w-9 h-9 rounded-lg flex items-center justify-center font-bold text-white shadow-xs ${
+              deskAlert.type === 'ORDER' ? 'bg-amber-600' : 'bg-[#c9a84c]'
+            }`}>
+              {deskAlert.type === 'ORDER' ? <UtensilsCrossed className="w-5 h-5" /> : <BellRing className="w-5 h-5 text-stone-900" />}
+            </div>
+            <div>
+              <div className="text-sm font-bold">{deskAlert.title}</div>
+              <div className="text-xs text-stone-600 mt-0.5">{deskAlert.subtitle}</div>
+            </div>
+          </div>
+          <button 
+            onClick={() => setDeskAlert(null)}
+            className="text-stone-400 hover:text-stone-600 p-1.5 rounded-lg hover:bg-black/5 transition-colors"
+            title="Dismiss alert"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Metrics Grid */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">

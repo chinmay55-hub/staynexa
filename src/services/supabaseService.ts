@@ -5,8 +5,8 @@
 import { supabase } from '../lib/supabase';
 import type { 
   Hotel, HotelBranding, HotelSettings, RoomType, Room, Guest, 
-  Reservation, Folio, FolioItem, Payment, Order, HousekeepingTask, 
-  MaintenanceTicket, QRCode, Subscription
+  Reservation, Folio, FolioItem, Payment, Order, OrderItem, HousekeepingTask, 
+  MaintenanceTicket, QRCode, Subscription, ServiceRequest, Notification, ActivityLog
 } from '../types';
 
 /**
@@ -192,20 +192,199 @@ export const supabaseOrderService = {
     const client = getClient();
     const { data, error } = await client
       .from('orders')
-      .select('*, order_items(*)')
+      .select('*, items:order_items(*), room:rooms(*), guest:guests(*)')
       .eq('hotel_id', hotelId)
       .order('created_at', { ascending: false });
     if (error) throw error;
     return data || [];
   },
 
+  async create(orderData: Omit<Order, 'id' | 'created_at' | 'updated_at' | 'items'> & { items: Omit<OrderItem, 'id' | 'order_id'>[] }): Promise<Order> {
+    const client = getClient();
+    const { items, ...orderRecord } = orderData;
+    
+    // 1. Insert into public.orders
+    const { data: order, error: orderErr } = await client
+      .from('orders')
+      .insert({
+        ...orderRecord,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .select('*, room:rooms(*), guest:guests(*)')
+      .single();
+    if (orderErr) throw orderErr;
+
+    // 2. Insert items into public.order_items
+    if (items && items.length > 0) {
+      const itemsToInsert = items.map(item => ({
+        ...item,
+        order_id: order.id,
+        hotel_id: order.hotel_id,
+      }));
+      const { data: insertedItems, error: itemsErr } = await client
+        .from('order_items')
+        .insert(itemsToInsert)
+        .select();
+      if (itemsErr) throw itemsErr;
+      order.items = insertedItems;
+    } else {
+      order.items = [];
+    }
+
+    // 3. Log to activity_logs
+    await client.from('activity_logs').insert({
+      hotel_id: order.hotel_id,
+      actor_name: 'Guest QR Portal',
+      action: 'ORDER_PLACED',
+      entity_type: 'ORDER',
+      entity_id: order.id,
+      metadata: { total: order.total, type: order.type, room_id: order.room_id },
+      created_at: new Date().toISOString(),
+    });
+
+    return order;
+  },
+
   async updateStatus(orderId: string, status: Order['status']): Promise<Order> {
     const client = getClient();
     const updates: Partial<Order> = { status };
+    if (status === 'ACCEPTED') updates.accepted_at = new Date().toISOString();
+    if (status === 'PREPARING') updates.preparing_at = new Date().toISOString();
+    if (status === 'READY') updates.ready_at = new Date().toISOString();
     if (status === 'DELIVERED') updates.delivered_at = new Date().toISOString();
-    const { data, error } = await client.from('orders').update(updates).eq('id', orderId).select().single();
+    const { data, error } = await client.from('orders').update(updates).eq('id', orderId).select('*, items:order_items(*)').single();
     if (error) throw error;
     return data;
+  },
+};
+
+// ─── Guest Service Requests ───────────────────────────────────────────────────
+
+export const supabaseServiceRequestService = {
+  async getAll(hotelId: string): Promise<ServiceRequest[]> {
+    const client = getClient();
+    const { data, error } = await client
+      .from('service_requests')
+      .select('*, room:rooms(*), guest:guests(*), service:hotel_services(*)')
+      .eq('hotel_id', hotelId)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    return data || [];
+  },
+
+  async create(data: Omit<ServiceRequest, 'id' | 'created_at' | 'updated_at'>): Promise<ServiceRequest> {
+    const client = getClient();
+    const { data: request, error } = await client
+      .from('service_requests')
+      .insert({
+        ...data,
+        status: data.status || 'PENDING',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .select('*, room:rooms(*), guest:guests(*), service:hotel_services(*)')
+      .single();
+    if (error) throw error;
+
+    // Log to activity_logs
+    await client.from('activity_logs').insert({
+      hotel_id: data.hotel_id,
+      actor_name: 'Guest QR Portal',
+      action: 'SERVICE_REQUEST_CREATED',
+      entity_type: 'SERVICE_REQUEST',
+      entity_id: request.id,
+      metadata: { title: request.title, priority: request.priority, room_id: request.room_id },
+      created_at: new Date().toISOString(),
+    });
+
+    return request;
+  },
+
+  async update(id: string, updates: Partial<ServiceRequest>): Promise<ServiceRequest> {
+    const client = getClient();
+    const { data, error } = await client
+      .from('service_requests')
+      .update({ ...updates, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select('*, room:rooms(*), guest:guests(*), service:hotel_services(*)')
+      .single();
+    if (error) throw error;
+    return data;
+  },
+};
+
+// ─── Housekeeping Tasks ───────────────────────────────────────────────────────
+
+export const supabaseHousekeepingService = {
+  async getTasks(hotelId: string): Promise<HousekeepingTask[]> {
+    const client = getClient();
+    const { data, error } = await client
+      .from('housekeeping_tasks')
+      .select('*, room:rooms(*)')
+      .eq('hotel_id', hotelId)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    return data || [];
+  },
+
+  async createTask(data: Omit<HousekeepingTask, 'id' | 'created_at'>): Promise<HousekeepingTask> {
+    const client = getClient();
+    const { data: task, error } = await client
+      .from('housekeeping_tasks')
+      .insert({
+        ...data,
+        status: data.status || 'PENDING',
+        created_at: new Date().toISOString(),
+      })
+      .select('*, room:rooms(*)')
+      .single();
+    if (error) throw error;
+    return task;
+  },
+
+  async updateTask(id: string, data: Partial<HousekeepingTask>): Promise<HousekeepingTask> {
+    const client = getClient();
+    const { data: task, error } = await client
+      .from('housekeeping_tasks')
+      .update(data)
+      .eq('id', id)
+      .select('*, room:rooms(*)')
+      .single();
+    if (error) throw error;
+
+    // If completed or inspected, update room status
+    if (data.status === 'COMPLETED' || data.status === 'INSPECTED') {
+      const newStatus = data.status === 'INSPECTED' ? 'INSPECTED' : 'CLEAN';
+      await client.from('rooms').update({ housekeeping_status: newStatus }).eq('id', task.room_id);
+    }
+    return task;
+  },
+};
+
+// ─── Operational Notifications ────────────────────────────────────────────────
+
+export const supabaseNotificationService = {
+  async getAll(userId: string, hotelId: string): Promise<Notification[]> {
+    const client = getClient();
+    const { data, error } = await client
+      .from('notifications')
+      .select('*')
+      .eq('hotel_id', hotelId)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    return data || [];
+  },
+
+  async create(data: Omit<Notification, 'id' | 'created_at'>): Promise<Notification> {
+    const client = getClient();
+    const { data: notif, error } = await client
+      .from('notifications')
+      .insert({ ...data, created_at: new Date().toISOString() })
+      .select()
+      .single();
+    if (error) throw error;
+    return notif;
   },
 };
 

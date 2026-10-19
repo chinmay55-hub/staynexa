@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Sparkles, 
   CheckCircle2, 
@@ -18,6 +18,7 @@ import {
   maintenanceService,
   activityLogService
 } from '../../services/demoDataService';
+import { realtimeSync } from '../../services/realtimeSync';
 import type { HousekeepingTask, Room, Priority } from '../../types';
 import { 
   Card, 
@@ -39,9 +40,36 @@ export default function HousekeepingPage({ defaultTab = 'TASKS' }: { defaultTab?
   const [activeTab, setActiveTab] = useState<'TASKS' | 'ROOMS'>(defaultTab);
   const [search, setSearch] = useState('');
 
-  React.useEffect(() => {
+  useEffect(() => {
     setActiveTab(defaultTab);
   }, [defaultTab]);
+
+  // Realtime WebSocket & Cross-Tab State Synchronization
+  useEffect(() => {
+    const disconnectSupabase = realtimeSync.connectSupabaseHotelChannel(hotelId);
+
+    const unsubNewTask = realtimeSync.subscribe('NEW_HOUSEKEEPING_TASK', ({ task }) => {
+      if (task.hotel_id === hotelId) {
+        setTasks(prev => {
+          if (prev.some(t => t.id === task.id)) return prev;
+          return [task, ...prev];
+        });
+      }
+    });
+
+    const unsubUpdateTask = realtimeSync.subscribe('HOUSEKEEPING_TASK_UPDATED', ({ taskId, task }) => {
+      setTasks(prev =>
+        prev.map(t => (t.id === taskId ? { ...t, ...task } : t))
+      );
+      setRooms([...roomService.getAll(hotelId)]);
+    });
+
+    return () => {
+      disconnectSupabase();
+      unsubNewTask();
+      unsubUpdateTask();
+    };
+  }, [hotelId]);
 
   // Report Maintenance Modal
   const [maintenanceRoom, setMaintenanceRoom] = useState<Room | null>(null);
