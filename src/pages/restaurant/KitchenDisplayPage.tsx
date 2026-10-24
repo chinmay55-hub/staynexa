@@ -18,7 +18,6 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { orderService, hotelService, reloadDemoStoreFromStorage } from '../../services/demoDataService';
-import { supabaseOrderService } from '../../services/supabaseService';
 import { audioService } from '../../services/audioService';
 import { realtimeSync } from '../../services/realtimeSync';
 import { isDemoMode, supabase } from '../../lib/supabase';
@@ -36,6 +35,13 @@ export default function KitchenDisplayPage() {
   const [orders, setOrders] = useState<Order[]>(() => orderService.getAll(hotelId));
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const [liveAlertBanner, setLiveAlertBanner] = useState<{ id: string; message: string } | null>(null);
+  const [isRealtimeConnected, setIsRealtimeConnected] = useState(() => realtimeSync.isSupabaseConnected());
+
+  // Subscribe to realtime connection state changes
+  useEffect(() => {
+    const unsubConn = realtimeSync.onConnectionChange(setIsRealtimeConnected);
+    return unsubConn;
+  }, []);
 
   // KDS Sound State
   const [isMuted, setIsMuted] = useState(() => audioService.isAudioMuted());
@@ -91,19 +97,36 @@ export default function KitchenDisplayPage() {
     };
   }, [hotelId]);
 
-  // 2. Secondary Infallible 5-Second Auto-Polling Fallback (guarantees zero missed tickets even on WebSocket disconnect)
+  // 2. Infallible Direct Database Polling (3-Second Interval Fallback)
   useEffect(() => {
     const pollInterval = setInterval(async () => {
       try {
         reloadDemoStoreFromStorage();
         let freshOrders = orderService.getAll(hotelId);
 
-        // If Supabase is active in production, poll direct from PostgreSQL table
+        // Direct query to Supabase PostgreSQL table
         if (!isDemoMode() && supabase) {
           try {
-            const remoteOrders = await supabaseOrderService.getAll(hotelId);
-            if (remoteOrders && remoteOrders.length > 0) {
-              freshOrders = remoteOrders;
+            const { data: dbOrders, error: dbErr } = await supabase
+              .from('orders')
+              .select('*, items:order_items(*), room:rooms(*), guest:guests(*)')
+              .eq('hotel_id', hotelId)
+              .order('created_at', { ascending: false });
+
+            if (!dbErr && dbOrders && dbOrders.length > 0) {
+              freshOrders = dbOrders;
+            } else {
+              const { data: simpleDbOrders } = await supabase
+                .from('orders')
+                .select('*')
+                .eq('hotel_id', hotelId)
+                .order('created_at', { ascending: false });
+              if (simpleDbOrders && simpleDbOrders.length > 0) {
+                freshOrders = simpleDbOrders.map(o => ({
+                  ...o,
+                  items: o.items || [],
+                }));
+              }
             }
           } catch (e) {
             // gracefully fallback to local store
@@ -136,9 +159,9 @@ export default function KitchenDisplayPage() {
           return freshOrders;
         });
       } catch (err) {
-        console.warn('[KDS] Polling error:', err);
+        console.warn('[KDS] 3-second polling error:', err);
       }
-    }, 5000);
+    }, 3000);
 
     return () => clearInterval(pollInterval);
   }, [hotelId]);
@@ -285,6 +308,21 @@ export default function KitchenDisplayPage() {
               {isMuted ? 'Sound Muted' : newOrders.length > 0 ? 'Chime Alerting' : 'KDS Sound ON'}
             </span>
           </button>
+
+          {/* Visual Connection Diagnostic Badge */}
+          {isRealtimeConnected ? (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="hidden md:inline">Realtime Connected (Supabase Active)</span>
+              <span className="md:hidden">Realtime</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-500/10 border border-amber-500/30 text-amber-400">
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+              <span className="hidden md:inline">Polling Fallback Mode (3s Sync)</span>
+              <span className="md:hidden">3s Sync</span>
+            </div>
+          )}
 
           <div className="hidden sm:flex items-center gap-2 bg-white/5 border border-white/10 px-3 py-1.5 rounded-lg text-xs font-mono">
             <Clock className="w-4 h-4 text-[#c9a84c]" />

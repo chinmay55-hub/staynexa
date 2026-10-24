@@ -206,4 +206,34 @@ describe('STAYNEXA SECURITY & SUPABASE INTEGRATION AUDIT SUITE', () => {
       expect(seedContent).toContain("ARRAY['AC', 'WiFi', 'TV'");
     });
   });
+
+  // ─── 6. REALTIME ORDER REPLICATION & RLS SECURITY AUDIT ───────────────────
+  describe('Realtime Order Replication & RLS Security Audit', () => {
+    const realtimeMigrationPath = path.resolve(process.cwd(), 'supabase/migrations/20240102000000_realtime_orders_rls.sql');
+    const realtimeSql = fs.readFileSync(realtimeMigrationPath, 'utf-8');
+
+    it('should configure REPLICA IDENTITY FULL for orders and order_items', () => {
+      expect(realtimeSql).toContain('ALTER TABLE orders REPLICA IDENTITY FULL;');
+      expect(realtimeSql).toContain('ALTER TABLE order_items REPLICA IDENTITY FULL;');
+      expect(realtimeSql).toContain('ALTER TABLE service_requests REPLICA IDENTITY FULL;');
+    });
+
+    it('should include orders and service_requests in supabase_realtime publication', () => {
+      expect(realtimeSql).toContain("ADD TABLE orders;");
+      expect(realtimeSql).toContain("ADD TABLE order_items;");
+      expect(realtimeSql).toContain("ADD TABLE service_requests;");
+    });
+
+    it('should define SECURITY DEFINER RPC endpoint create_guest_order for anonymous guest orders', () => {
+      expect(realtimeSql).toContain('CREATE OR REPLACE FUNCTION create_guest_order(');
+      expect(realtimeSql).toContain('SECURITY DEFINER');
+      expect(realtimeSql).toContain('GRANT EXECUTE ON FUNCTION create_guest_order TO anon');
+    });
+
+    it('should allow anon insert and select on orders for mobile guest tracking', () => {
+      expect(realtimeSql).toContain('CREATE POLICY orders_insert_policy ON orders');
+      expect(realtimeSql).toContain('CREATE POLICY orders_select_policy ON orders');
+      expect(realtimeSql).toContain("auth.role() = 'anon'");
+    });
+  });
 });

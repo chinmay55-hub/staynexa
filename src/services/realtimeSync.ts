@@ -1,6 +1,6 @@
 // StayNexa Realtime Synchronization Engine
 // Bridges Supabase Realtime WebSockets, BroadcastChannel, and Cross-Tab Storage Events
-// Guarantees instant synchronization between Guest Portal, KDS, Reception, and Housekeeping
+// Guarantees cross-device and instant synchronization between Guest Portal, KDS, Reception, and Housekeeping
 
 import { supabase, isDemoMode } from '../lib/supabase';
 import type { Order, ServiceRequest, HousekeepingTask, Notification, ActivityLog, Reservation, Room, Folio } from '../types';
@@ -41,7 +41,10 @@ class RealtimeSyncService {
   private listeners: Map<RealtimeEventType, Set<EventCallback<any>>> = new Map();
   private activeSupabaseChannels: Map<string, any> = new Map();
   private globalSupabaseChannel: any = null;
+  private publicOrdersChannel: any = null;
   private lastProcessedEventTimestamps: Set<string> = new Set();
+  private isConnectedToSupabase: boolean = false;
+  private connectionChangeListeners: Set<(connected: boolean) => void> = new Set();
 
   constructor() {
     // 1. Initialize BroadcastChannel for modern browser tabs
@@ -82,8 +85,8 @@ class RealtimeSyncService {
       });
     }
 
-    // 3. Initialize Supabase Realtime broadcast channel ('staynexa-global-sync')
-    this.initSupabaseGlobalChannel();
+    // 3. Initialize Cross-Device Supabase Realtime Channels
+    this.initSupabaseChannels();
   }
 
   private markProcessed(key: string): void {
@@ -98,10 +101,39 @@ class RealtimeSyncService {
     }
   }
 
-  private initSupabaseGlobalChannel(): void {
-    if (typeof window === 'undefined' || isDemoMode() || !supabase) return;
+  public isSupabaseConnected(): boolean {
+    return this.isConnectedToSupabase && !isDemoMode() && !!supabase;
+  }
+
+  public onConnectionChange(callback: (connected: boolean) => void): () => void {
+    this.connectionChangeListeners.add(callback);
+    callback(this.isSupabaseConnected());
+    return () => {
+      this.connectionChangeListeners.delete(callback);
+    };
+  }
+
+  private setConnectionState(connected: boolean): void {
+    if (this.isConnectedToSupabase !== connected) {
+      this.isConnectedToSupabase = connected;
+      this.connectionChangeListeners.forEach(cb => {
+        try {
+          cb(connected);
+        } catch (e) {
+          console.warn('[RealtimeSync] Error in connection listener:', e);
+        }
+      });
+    }
+  }
+
+  private initSupabaseChannels(): void {
+    if (typeof window === 'undefined' || isDemoMode() || !supabase) {
+      this.setConnectionState(false);
+      return;
+    }
 
     try {
+      // Channel A: Custom Broadcast Channel ('staynexa-global-sync')
       this.globalSupabaseChannel = supabase.channel('staynexa-global-sync')
         .on('broadcast', { event: 'staynexa-global-sync' }, ({ payload }) => {
           if (payload && payload.type && payload.payload) {
@@ -114,11 +146,76 @@ class RealtimeSyncService {
         })
         .subscribe((status) => {
           if (status === 'SUBSCRIBED') {
-            console.info('[StayNexa Realtime] Subscribed to staynexa-global-sync broadcast channel');
+            this.setConnectionState(true);
+            console.info('[StayNexa Realtime] Subscribed to staynexa-global-sync channel');
+          } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+            this.setConnectionState(false);
           }
         });
+
+      // Channel B: Dedicated Cross-Device Postgres Changes Channel ('public:orders')
+      this.publicOrdersChannel = supabase.channel('public:orders')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'orders' },
+          (payload) => {
+            const rawOrder = payload.new as Order;
+            if (!rawOrder) return;
+
+            const safeOrder: Order = {
+              ...rawOrder,
+              items: rawOrder.items && Array.isArray(rawOrder.items) ? rawOrder.items : [],
+            };
+
+            const eventKey = `ORDER-${rawOrder.id}-${payload.eventType}`;
+            if (!this.lastProcessedEventTimestamps.has(eventKey)) {
+              this.markProcessed(eventKey);
+              if (payload.eventType === 'INSERT') {
+                this.emit('NEW_ORDER', { order: safeOrder });
+              } else if (payload.eventType === 'UPDATE') {
+                this.emit('ORDER_STATUS_CHANGED', {
+                  orderId: rawOrder.id,
+                  status: rawOrder.status,
+                  order: safeOrder,
+                });
+              }
+            }
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'service_requests' },
+          (payload) => {
+            const rawReq = payload.new as ServiceRequest;
+            if (!rawReq) return;
+
+            const eventKey = `REQ-${rawReq.id}-${payload.eventType}`;
+            if (!this.lastProcessedEventTimestamps.has(eventKey)) {
+              this.markProcessed(eventKey);
+              if (payload.eventType === 'INSERT') {
+                this.emit('NEW_SERVICE_REQUEST', { request: rawReq });
+              } else if (payload.eventType === 'UPDATE') {
+                this.emit('REQUEST_STATUS_CHANGED', {
+                  requestId: rawReq.id,
+                  status: rawReq.status,
+                  request: rawReq,
+                });
+              }
+            }
+          }
+        )
+        .subscribe((status) => {
+          if (status === 'SUBSCRIBED') {
+            this.setConnectionState(true);
+            console.info('[StayNexa Realtime] Subscribed to cross-device public:orders Postgres changes');
+          } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+            this.setConnectionState(false);
+          }
+        });
+
     } catch (err) {
-      console.warn('[RealtimeSync] Failed to initialize staynexa-global-sync channel:', err);
+      console.warn('[RealtimeSync] Failed to initialize Supabase channels:', err);
+      this.setConnectionState(false);
     }
   }
 
@@ -198,7 +295,7 @@ class RealtimeSyncService {
   // Connect to Supabase Realtime WebSocket channel for a hotel
   public connectSupabaseHotelChannel(hotelId: string): () => void {
     if (isDemoMode() || !supabase) {
-      return () => {}; // In demo mode, BroadcastChannel & storage events handle cross-tab synchronization
+      return () => {};
     }
 
     if (this.activeSupabaseChannels.has(hotelId)) {
@@ -207,7 +304,6 @@ class RealtimeSyncService {
 
     try {
       const channel = supabase.channel(`hotel-realtime-${hotelId}`)
-        // Listen to new or updated orders
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'orders', filter: `hotel_id=eq.${hotelId}` },
@@ -215,7 +311,6 @@ class RealtimeSyncService {
             const rawOrder = payload.new as Order;
             if (!rawOrder) return;
 
-            // Defensive enrichment: ensure items array exists to prevent UI render crashes
             const safeOrder: Order = {
               ...rawOrder,
               items: rawOrder.items && Array.isArray(rawOrder.items) ? rawOrder.items : [],
@@ -232,7 +327,6 @@ class RealtimeSyncService {
             }
           }
         )
-        // Listen to service requests
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'service_requests', filter: `hotel_id=eq.${hotelId}` },
@@ -251,7 +345,6 @@ class RealtimeSyncService {
             }
           }
         )
-        // Listen to housekeeping tasks
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'housekeeping_tasks', filter: `hotel_id=eq.${hotelId}` },
@@ -266,7 +359,6 @@ class RealtimeSyncService {
             }
           }
         )
-        // Listen to desk notifications
         .on(
           'postgres_changes',
           { event: 'INSERT', schema: 'public', table: 'notifications', filter: `hotel_id=eq.${hotelId}` },
@@ -276,6 +368,7 @@ class RealtimeSyncService {
         )
         .subscribe((status) => {
           if (status === 'SUBSCRIBED') {
+            this.setConnectionState(true);
             console.info(`[StayNexa Realtime] Subscribed to live WebSocket updates for hotel: ${hotelId}`);
           }
         });

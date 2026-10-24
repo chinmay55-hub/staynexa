@@ -26,7 +26,7 @@ export interface UseStayNexaStoreOptions {
 export function useStayNexaStore(hotelId: string = 'hotel-001', options: UseStayNexaStoreOptions = {}) {
   const {
     enablePolling = true,
-    pollingIntervalMs = 5000,
+    pollingIntervalMs = 3000,
     autoChimeOnNewOrder = true,
   } = options;
 
@@ -37,6 +37,12 @@ export function useStayNexaStore(hotelId: string = 'hotel-001', options: UseStay
   const [serviceRequests, setServiceRequests] = useState<ServiceRequest[]>(() => serviceRequestService.getAll(hotelId));
   const [lastSyncTime, setLastSyncTime] = useState<Date>(() => new Date());
   const [activeAlert, setActiveAlert] = useState<{ id: string; message: string } | null>(null);
+  const [isRealtimeConnected, setIsRealtimeConnected] = useState(() => realtimeSync.isSupabaseConnected());
+
+  useEffect(() => {
+    const unsub = realtimeSync.onConnectionChange(setIsRealtimeConnected);
+    return unsub;
+  }, []);
 
   // Track known order IDs to prevent duplicate sound chimes
   const knownOrderIdsRef = useRef<Set<string>>(new Set(orders.map(o => o.id)));
@@ -216,6 +222,7 @@ export function useStayNexaStore(hotelId: string = 'hotel-001', options: UseStay
     folios,
     serviceRequests,
     lastSyncTime,
+    isRealtimeConnected,
     activeAlert,
     clearAlert: () => setActiveAlert(null),
     refreshOrders,

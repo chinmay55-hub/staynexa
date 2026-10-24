@@ -84,7 +84,7 @@ export default function GuestPortalPage() {
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [paymentOption, setPaymentOption] = useState<'ROOM_CHARGE' | 'UPI'>('ROOM_CHARGE');
   const [orderSpecialInstructions, setOrderSpecialInstructions] = useState('');
-  const [orderSuccessMsg, setOrderSuccessMsg] = useState(false);
+  const [orderSuccessToast, setOrderSuccessToast] = useState<string | null>(null);
   const [orderErrorMsg, setOrderErrorMsg] = useState<string | null>(null);
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
   const [myOrders, setMyOrders] = useState<Order[]>([]);
@@ -357,8 +357,9 @@ export default function GuestPortalPage() {
       setCart({});
       setIsCartOpen(false);
       setOrderSpecialInstructions('');
-      setOrderSuccessMsg(true);
-      setTimeout(() => setOrderSuccessMsg(false), 5000);
+      const orderTag = room?.number ? `${room.number}` : newOrd.id.slice(-4).toUpperCase();
+      setOrderSuccessToast(`Order #${orderTag} Sent to Kitchen!`);
+      setTimeout(() => setOrderSuccessToast(null), 5000);
     } catch (err: any) {
       console.error('[GuestPortal] Order submission error:', err);
       setOrderErrorMsg(err?.message || 'Unable to dispatch order. Please check network or front desk.');
@@ -571,10 +572,10 @@ export default function GuestPortalPage() {
         </header>
 
         {/* Global Feedback Banners */}
-        {orderSuccessMsg && (
-          <div className="bg-emerald-600 text-white p-3 text-xs font-bold text-center flex items-center justify-center gap-2 animate-bounce">
+        {orderSuccessToast && (
+          <div className="bg-emerald-600 text-white p-3 text-xs font-bold text-center flex items-center justify-center gap-2 animate-bounce shadow-md">
             <CheckCircle2 className="w-4 h-4" />
-            Your In-Room Dining order was placed and dispatched to the kitchen!
+            {orderSuccessToast}
           </div>
         )}
         {orderErrorMsg && (
