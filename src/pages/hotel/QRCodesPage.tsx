@@ -151,12 +151,12 @@ export default function QRCodesPage() {
                       <td className="py-3.5 px-4 text-xs font-mono text-stone-600">
                         {qr ? (
                           <a 
-                            href={`/q/${qr.token}`} 
+                            href={generateGuestPortalUrl(qr.token)} 
                             target="_blank" 
                             rel="noreferrer"
                             className="text-[#c9a84c] hover:underline flex items-center gap-1 font-semibold"
                           >
-                            /q/{qr.token} <ExternalLink className="w-3 h-3" />
+                            {generateGuestPortalUrl(qr.token)} <ExternalLink className="w-3 h-3" />
                           </a>
                         ) : (
                           <span className="text-stone-400">No active QR generated</span>
@@ -285,6 +285,18 @@ export default function QRCodesPage() {
               )}
             </div>
 
+            <div className="p-2.5 rounded-xl bg-stone-50 border border-stone-200 text-center space-y-1">
+              <span className="text-[10px] text-stone-400 uppercase tracking-wider block font-bold">Direct Scannable URL</span>
+              <a 
+                href={generateGuestPortalUrl(previewQr.token)} 
+                target="_blank" 
+                rel="noreferrer" 
+                className="font-mono text-xs text-[#c9a84c] hover:underline font-bold inline-flex items-center gap-1.5 break-all"
+              >
+                {generateGuestPortalUrl(previewQr.token)} <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+              </a>
+            </div>
+
             <div className="space-y-1 text-xs text-stone-600">
               <p className="font-bold text-stone-900">Scan with your smartphone camera</p>
               <p className="text-[11px] text-stone-400">Order room service · Request housekeeping · View WiFi</p>
@@ -357,6 +369,9 @@ export default function QRCodesPage() {
                 </div>
 
                 <div className="text-xs font-bold text-stone-800">Scan for In-Room Dining & Concierge</div>
+                <div className="font-mono text-[9px] text-[#c9a84c] font-bold truncate px-2 py-0.5 bg-stone-50 rounded border border-stone-200">
+                  {generateGuestPortalUrl(qrCodes.find(q => q.room_id === room.id && q.is_active)?.token || `gp-r${room.number}-demo`)}
+                </div>
                 <div className="text-[10px] text-stone-500">Wi-Fi Access · Room Service · Instant Requests</div>
               </div>
             ))}

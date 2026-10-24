@@ -27,6 +27,7 @@ import {
 import { 
   qrService, 
   hotelService, 
+  roomService,
   reservationService, 
   menuService, 
   orderService, 
@@ -58,10 +59,13 @@ interface ChatMessage {
 }
 
 export default function GuestPortalPage() {
-  const { token } = useParams<{ token: string }>();
+  const params = useParams();
+  const rawToken = params.token || params['*'] || '';
+  const token = rawToken.replace(/^\/+|\/+$/g, '').trim();
 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [demoNotice, setDemoNotice] = useState<string | null>(null);
 
   const [hotel, setHotel] = useState<Hotel | null>(null);
   const [room, setRoom] = useState<Room | null>(null);
@@ -108,48 +112,117 @@ export default function GuestPortalPage() {
   const [chatInput, setChatInput] = useState('');
 
   useEffect(() => {
-    if (!token) {
-      setError('Missing QR access token.');
-      setIsLoading(false);
-      return;
-    }
+    setIsLoading(true);
+    setError(null);
 
-    const resolved = qrService.getByToken(token);
-    if (!resolved || !resolved.hotel) {
-      setError('Invalid or expired room QR code. Please scan the QR code located in your room.');
-      setIsLoading(false);
-      return;
-    }
+    // 1. Resolve primary hotel
+    const allHotels = hotelService.getAll();
+    let resolvedHotel: Hotel | undefined = hotelService.getById('hotel-001') || allHotels[0];
+    let resolvedRoom: Room | null = null;
+    let isFallbackSession = false;
 
-    setHotel(resolved.hotel);
-    setRoom(resolved.room || null);
+    // 2. Resilient token & room resolution
+    if (token) {
+      // 2A. Exact QR token lookup via qrService
+      const qrMatch = qrService.getByToken(token);
+      if (qrMatch) {
+        if (qrMatch.hotel) resolvedHotel = qrMatch.hotel;
+        if (qrMatch.room) resolvedRoom = qrMatch.room;
+      }
 
-    // If room is resolved, check active reservation & guest
-    if (resolved.room) {
-      const activeRes = reservationService.getAll(resolved.hotel.id)
-        .find(r => r.room_id === resolved.room!.id && r.status === 'CHECKED_IN');
+      // 2B. Direct roomId or roomNumber matching
+      if (!resolvedRoom) {
+        for (const h of allHotels) {
+          const hRooms = roomService.getAll(h.id);
+          const matched = hRooms.find(r => 
+            r.id === token || 
+            r.number.toLowerCase() === token.toLowerCase() ||
+            r.number.replace(/\D/g, '') === token.replace(/\D/g, '') ||
+            token.toLowerCase().includes(`r${r.number.toLowerCase()}`) ||
+            token.toLowerCase().includes(r.number.toLowerCase())
+          );
+          if (matched) {
+            resolvedRoom = matched;
+            resolvedHotel = h;
+            break;
+          }
+        }
+      }
 
-      if (activeRes) {
-        setReservation(activeRes);
-        if (activeRes.guest) setGuest(activeRes.guest);
-        const f = folioService.getByReservation(activeRes.id);
-        if (f) setFolio(f);
+      // 2C. QR table room_id or token matching
+      if (!resolvedRoom) {
+        for (const h of allHotels) {
+          const qrs = qrService.getAll(h.id);
+          const matchedQr = qrs.find(q => 
+            q.token.toLowerCase() === token.toLowerCase() ||
+            q.room_id === token ||
+            q.id === token
+          );
+          if (matchedQr && matchedQr.room) {
+            resolvedRoom = matchedQr.room;
+            resolvedHotel = h;
+            break;
+          }
+        }
       }
     }
 
-    // Load menu and services for this hotel
-    setCategories(menuService.getCategories(resolved.hotel.id));
-    setMenuItems(menuService.getItems(resolved.hotel.id));
-    setServices(serviceRequestService.getServices(resolved.hotel.id));
-
-    // Load active orders and requests for this room
-    if (resolved.room) {
-      const allOrders = orderService.getAll(resolved.hotel.id);
-      setMyOrders(allOrders.filter(o => o.room_id === resolved.room!.id));
-
-      const allRequests = serviceRequestService.getAll(resolved.hotel.id);
-      setMyRequests(allRequests.filter(r => r.room_id === resolved.room!.id));
+    // 3. FALLBACK GUARANTEE:
+    // If no matching room is found for the given token, DO NOT throw a 404 or blank screen.
+    // Automatically assign and display the first available clean room (e.g. Room 101).
+    if (!resolvedRoom && resolvedHotel) {
+      const hotelRooms = roomService.getAll(resolvedHotel.id);
+      resolvedRoom = 
+        hotelRooms.find(r => r.number === '101') || 
+        hotelRooms.find(r => r.status === 'AVAILABLE' && r.housekeeping_status === 'CLEAN') || 
+        hotelRooms[0] || 
+        null;
+      isFallbackSession = true;
     }
+
+    if (!resolvedHotel || !resolvedRoom) {
+      setError('Unable to load demo room session. Please refresh.');
+      setIsLoading(false);
+      return;
+    }
+
+    setHotel(resolvedHotel);
+    setRoom(resolvedRoom);
+
+    if (isFallbackSession) {
+      setDemoNotice(`Demo Guest Session Loaded · Connected to Room ${resolvedRoom.number}`);
+    } else {
+      setDemoNotice(null);
+    }
+
+    // 4. Resolve active reservation, guest, folio
+    const allRes = reservationService.getAll(resolvedHotel.id);
+    const activeRes = allRes.find(r => r.room_id === resolvedRoom!.id && r.status === 'CHECKED_IN');
+
+    if (activeRes) {
+      setReservation(activeRes);
+      if (activeRes.guest) setGuest(activeRes.guest);
+      const f = folioService.getByReservation(activeRes.id);
+      if (f) setFolio(f);
+    } else {
+      // Default to guest session for demo interaction
+      const sampleRes = allRes.find(r => r.room_id === resolvedRoom!.id) || allRes[0];
+      if (sampleRes && sampleRes.guest) {
+        setGuest(sampleRes.guest);
+      }
+    }
+
+    // 5. Load menu categories, menu items, and services
+    setCategories(menuService.getCategories(resolvedHotel.id));
+    setMenuItems(menuService.getItems(resolvedHotel.id));
+    setServices(serviceRequestService.getServices(resolvedHotel.id));
+
+    // 6. Load orders and requests for this room
+    const allOrders = orderService.getAll(resolvedHotel.id);
+    setMyOrders(allOrders.filter(o => o.room_id === resolvedRoom!.id));
+
+    const allRequests = serviceRequestService.getAll(resolvedHotel.id);
+    setMyRequests(allRequests.filter(r => r.room_id === resolvedRoom!.id));
 
     setIsLoading(false);
   }, [token]);
@@ -443,6 +516,19 @@ export default function GuestPortalPage() {
     <div className="min-h-screen bg-stone-100 flex justify-center text-stone-900 font-sans pb-24">
       {/* Mobile viewport constraint */}
       <div className="w-full max-w-md bg-white min-h-screen shadow-2xl flex flex-col relative overflow-hidden">
+        {/* Fallback demo session notification banner */}
+        {demoNotice && (
+          <div className="bg-amber-400 text-stone-950 px-3.5 py-1.5 text-xs font-bold flex items-center justify-between border-b border-amber-500 shadow-xs z-20">
+            <div className="flex items-center gap-1.5 truncate">
+              <Sparkles className="w-3.5 h-3.5 text-stone-950 shrink-0" />
+              <span className="truncate">{demoNotice}</span>
+            </div>
+            <span className="text-[10px] bg-stone-900 text-white px-1.5 py-0.5 rounded uppercase font-extrabold tracking-wider shrink-0 ml-1">
+              Demo Session Loaded
+            </span>
+          </div>
+        )}
+
         {/* Top Header Banner */}
         <header 
           className="p-5 text-white flex flex-col justify-between relative shadow-md"

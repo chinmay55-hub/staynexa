@@ -74,8 +74,12 @@ function AppRoutes() {
     <Routes>
       {/* Public routes */}
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/guest" element={<GuestPortalPage />} />
       <Route path="/guest/:token" element={<GuestPortalPage />} />
+      <Route path="/guest/*" element={<GuestPortalPage />} />
+      <Route path="/q" element={<GuestPortalPage />} />
       <Route path="/q/:token" element={<GuestPortalPage />} />
+      <Route path="/q/*" element={<GuestPortalPage />} />
 
       {/* Home redirect */}
       <Route path="/" element={

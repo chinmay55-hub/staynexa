@@ -675,6 +675,17 @@ describe('STAYNEXA CORE HOTEL OPERATING SYSTEM TEST SUITE', () => {
       expect(url.startsWith('http')).toBe(true);
     });
 
+    it('should generate canonical /q/:token url for room object or room target', () => {
+      const urlWithRoom = generateGuestPortalUrl({ id: 'room-001', number: '101' });
+      expect(urlWithRoom).toContain('/q/room-001');
+
+      const urlWithQrToken = generateGuestPortalUrl({ qrToken: 'gp-r101-abc123' });
+      expect(urlWithQrToken).toContain('/q/gp-r101-abc123');
+
+      const urlEmpty = generateGuestPortalUrl(null);
+      expect(urlEmpty).toContain('/q/101');
+    });
+
     it('should provide dynamic base URL matching window origin or fallback', () => {
       const base = getBaseUrl();
       expect(base).toBeDefined();
