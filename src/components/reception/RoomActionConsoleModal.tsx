@@ -24,6 +24,7 @@ import {
   maintenanceService,
   activityLogService 
 } from '../../services/demoDataService';
+import { realtimeSync } from '../../services/realtimeSync';
 import { generateGuestPortalUrl } from '../../utils/qrCode';
 import type { 
   Room, 
@@ -165,6 +166,35 @@ export function RoomActionConsoleModal({
     // Fetch active checked-in reservation for this room
     refreshRoomData(room.id);
   }, [room, hotelId, refreshRoomData]);
+
+  // Realtime synchronization for Folio and Order charges while modal is open
+  useEffect(() => {
+    if (!isOpen || !currentRoom) return;
+
+    const unsubFolio = realtimeSync.subscribe('FOLIO_UPDATED', ({ folio: updatedFolio }) => {
+      if (updatedFolio.hotel_id === hotelId) {
+        refreshRoomData(currentRoom.id);
+      }
+    });
+
+    const unsubOrder = realtimeSync.subscribe('NEW_ORDER', ({ order }) => {
+      if (order.hotel_id === hotelId && (order.room_id === currentRoom.id || order.room?.number === currentRoom.number)) {
+        refreshRoomData(currentRoom.id);
+      }
+    });
+
+    const unsubOrderStatus = realtimeSync.subscribe('ORDER_STATUS_CHANGED', ({ order }) => {
+      if (order.hotel_id === hotelId && (order.room_id === currentRoom.id || order.room?.number === currentRoom.number)) {
+        refreshRoomData(currentRoom.id);
+      }
+    });
+
+    return () => {
+      unsubFolio();
+      unsubOrder();
+      unsubOrderStatus();
+    };
+  }, [isOpen, currentRoom, hotelId, refreshRoomData]);
 
   if (!isOpen || !currentRoom) return null;
 

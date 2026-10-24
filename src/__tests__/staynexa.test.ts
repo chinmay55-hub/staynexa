@@ -693,5 +693,142 @@ describe('STAYNEXA CORE HOTEL OPERATING SYSTEM TEST SUITE', () => {
       expect(base.length).toBeGreaterThan(0);
     });
   });
+
+  // ─── 14. REAL-TIME KDS SYNC & GUEST ORDER PIPELINE HARDENING ─────────────
+  describe('Real-Time KDS Sync & Guest Order Pipeline Hardening', () => {
+    it('should automatically attach in-room order to active checked-in room folio', () => {
+      // Create order with charge_to_room: true
+      const order = orderService.create({
+        hotel_id: 'hotel-001',
+        room_id: 'room-001',
+        guest_id: 'guest-001',
+        status: 'PENDING',
+        type: 'ROOM_SERVICE',
+        subtotal: 800,
+        tax_amount: 40,
+        total: 840,
+        charge_to_room: true,
+        items: [
+          {
+            menu_item_id: 'mi-001',
+            name: 'Biryani Special',
+            quantity: 2,
+            unit_price: 400,
+            tax_percent: 5,
+            total: 840,
+          }
+        ]
+      });
+
+      expect(order.id).toBeDefined();
+
+      // Verify folio item was attached
+      const allRes = reservationService.getAll('hotel-001');
+      const activeRes = allRes.find(r => r.room_id === 'room-001' && r.status === 'CHECKED_IN') || allRes[0];
+      expect(activeRes).toBeDefined();
+
+      const folio = folioService.getByReservation(activeRes.id);
+      expect(folio).toBeDefined();
+
+      const items = folioService.getItems(folio!.id);
+      const orderFolioItem = items.find(i => i.reference_id === order.id);
+      expect(orderFolioItem).toBeDefined();
+      expect(orderFolioItem?.category).toBe('ROOM_SERVICE');
+      expect(orderFolioItem?.total).toBe(840);
+    });
+
+    it('should place order via orderService.placeOrder with full payload validation', async () => {
+      const res = await orderService.placeOrder({
+        hotel_id: 'hotel-001',
+        room_id: 'room-001',
+        guest_id: 'guest-001',
+        status: 'PENDING',
+        type: 'ROOM_SERVICE',
+        subtotal: 300,
+        tax_amount: 15,
+        total: 315,
+        charge_to_room: true,
+        items: [
+          {
+            menu_item_id: 'mi-002',
+            name: 'Masala Chai',
+            quantity: 3,
+            unit_price: 100,
+            tax_percent: 5,
+            total: 315,
+          }
+        ]
+      });
+
+      expect(res.success).toBe(true);
+      expect(res.order).toBeDefined();
+      expect(res.order.items.length).toBe(1);
+      expect(res.order.total).toBe(315);
+    });
+
+    it('should broadcast custom staynexa_global_sync event into localStorage on emit', () => {
+      let received = false;
+      const unsub = realtimeSync.subscribe('NEW_ORDER', () => {
+        received = true;
+      });
+
+      realtimeSync.emit('NEW_ORDER', {
+        order: {
+          id: 'ord-test-broadcast-999',
+          hotel_id: 'hotel-001',
+          status: 'PENDING',
+          type: 'ROOM_SERVICE',
+          subtotal: 200,
+          tax_amount: 10,
+          total: 210,
+          charge_to_room: true,
+          items: [],
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }
+      });
+
+      expect(received).toBe(true);
+      unsub();
+
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const syncItem = window.localStorage.getItem('staynexa_global_sync');
+        expect(syncItem).not.toBeNull();
+        const parsed = JSON.parse(syncItem!);
+        expect(parsed.type).toBe('NEW_ORDER');
+      }
+    });
+
+    it('should attach order to folio when kitchen marks order as DELIVERED', () => {
+      const order = orderService.create({
+        hotel_id: 'hotel-001',
+        room_id: 'room-001',
+        status: 'READY',
+        type: 'ROOM_SERVICE',
+        subtotal: 500,
+        tax_amount: 25,
+        total: 525,
+        charge_to_room: true,
+        items: [{ menu_item_id: 'mi-003', name: 'Dal Makhani', quantity: 1, unit_price: 500, tax_percent: 5, total: 525 }]
+      });
+
+      const delivered = orderService.updateStatus(order.id, 'DELIVERED');
+      expect(delivered?.status).toBe('DELIVERED');
+
+      const allRes = reservationService.getAll('hotel-001');
+      const activeRes = allRes.find(r => r.room_id === 'room-001' && r.status === 'CHECKED_IN') || allRes[0];
+      const folio = folioService.getByReservation(activeRes.id);
+      expect(folio).toBeDefined();
+
+      const items = folioService.getItems(folio!.id);
+      expect(items.some(i => i.reference_id === order.id)).toBe(true);
+    });
+
+    it('should synthesize audio chime cleanly via audioService without exceptions', () => {
+      expect(() => audioService.playChime()).not.toThrow();
+      expect(() => audioService.toggleMute()).not.toThrow();
+      expect(() => audioService.stopContinuousAlert()).not.toThrow();
+    });
+  });
 });
 

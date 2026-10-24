@@ -159,6 +159,33 @@ export function saveDemoStore() {
   }
 }
 
+export function reloadDemoStoreFromStorage(): void {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  const store = loadInitialStore();
+  if (store) {
+    if (Array.isArray(store.hotels)) hotels = [...store.hotels];
+    if (Array.isArray(store.rooms)) rooms = [...store.rooms];
+    if (Array.isArray(store.guests)) guests = [...store.guests];
+    if (Array.isArray(store.reservations)) reservations = [...store.reservations];
+    if (Array.isArray(store.folios)) folios = [...store.folios];
+    if (Array.isArray(store.folioItems)) folioItems = [...store.folioItems];
+    if (Array.isArray(store.payments)) payments = [...store.payments];
+    if (Array.isArray(store.orders)) orders = [...store.orders];
+    if (Array.isArray(store.serviceRequests)) serviceRequests = [...store.serviceRequests];
+    if (Array.isArray(store.housekeepingTasks)) housekeepingTasks = [...store.housekeepingTasks];
+    if (Array.isArray(store.notifications)) notifications = [...store.notifications];
+  }
+}
+
+// Auto-sync in-memory stores across separate browser windows and tabs
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e) => {
+    if (e.key === DEMO_STORE_KEY || e.key === 'staynexa_global_sync') {
+      reloadDemoStoreFromStorage();
+    }
+  });
+}
+
 export function resetDemoStore(): void {
   if (typeof window !== 'undefined' && window.localStorage) {
     localStorage.removeItem(DEMO_STORE_KEY);
@@ -515,6 +542,74 @@ export const folioService = {
     saveDemoStore();
     realtimeSync.emit('FOLIO_UPDATED', { folio: folios[idx] });
   },
+  attachOrderToRoomFolio: (order: Order): FolioItem | null => {
+    try {
+      // 1. Avoid duplicate charges for the same order reference
+      const existing = folioItems.find(fi => fi.reference_id === order.id);
+      if (existing) return existing;
+
+      // 2. Identify the active reservation for this room
+      const allRes = reservationService.getAll(order.hotel_id);
+      let targetRes = order.room_id ? allRes.find(r => r.room_id === order.room_id && r.status === 'CHECKED_IN') : undefined;
+      if (!targetRes && order.reservation_id) {
+        targetRes = allRes.find(r => r.id === order.reservation_id);
+      }
+      if (!targetRes && order.room_id) {
+        targetRes = allRes.find(r => r.room_id === order.room_id);
+      }
+      if (!targetRes) {
+        targetRes = allRes.find(r => r.status === 'CHECKED_IN') || allRes[0];
+      }
+      if (!targetRes) return null;
+
+      // 3. Find or create the active folio
+      let targetFolio = folios.find(f => f.reservation_id === targetRes!.id);
+      if (!targetFolio) {
+        targetFolio = {
+          id: `fol-${Date.now()}-${uuid().slice(0, 4)}`,
+          hotel_id: order.hotel_id,
+          reservation_id: targetRes.id,
+          guest_id: targetRes.guest_id || order.guest_id || 'guest-001',
+          status: 'PENDING',
+          total_charges: targetRes.total_amount || 0,
+          total_payments: 0,
+          outstanding: targetRes.total_amount || 0,
+          created_at: now(),
+          updated_at: now(),
+        };
+        folios.push(targetFolio);
+      }
+
+      if (!targetFolio) return null;
+
+      // 4. Create and attach folio item
+      const subtotal = order.subtotal ?? (order.total * 0.95);
+      const taxAmount = order.tax_amount ?? (order.total - subtotal);
+      const itemsSummary = (order.items && order.items.length > 0)
+        ? ` (${order.items.map(i => `${i.quantity}x ${i.name}`).join(', ')})`
+        : '';
+      const folioItem = folioService.addItem({
+        folio_id: targetFolio.id,
+        hotel_id: order.hotel_id,
+        description: `In-Room Dining: Order #${order.id.slice(-6).toUpperCase()}${itemsSummary}`,
+        category: 'ROOM_SERVICE',
+        quantity: 1,
+        unit_price: subtotal,
+        tax_percent: 5,
+        tax_amount: taxAmount,
+        discount_amount: 0,
+        total: order.total,
+        reference_id: order.id,
+        posted_at: now(),
+        posted_by: 'KDS & Room Service Dispatch',
+      });
+
+      return folioItem;
+    } catch (err) {
+      console.warn('[FolioSync] Error attaching order to room folio:', err);
+      return null;
+    }
+  },
 };
 
 // ─── Restaurant / Orders ──────────────────────────────────────────────────────
@@ -552,6 +647,11 @@ export const orderService = {
     };
     orders.unshift(order);
     saveDemoStore();
+
+    // Auto-attach to active Room Folio if charge_to_room !== false
+    if (data.charge_to_room !== false && (data.room_id || data.reservation_id)) {
+      folioService.attachOrderToRoomFolio(order);
+    }
 
     // Create Notification for Desk & KDS
     const notif: Notification = {
@@ -601,6 +701,11 @@ export const orderService = {
     const updated = orders[idx];
     saveDemoStore();
 
+    // When order is delivered or ready, guarantee folio charge attachment
+    if ((status === 'DELIVERED' || status === 'READY') && updated.charge_to_room !== false) {
+      folioService.attachOrderToRoomFolio(updated);
+    }
+
     // Write to Supabase in production mode
     if (!isDemoMode() && supabase) {
       supabaseOrderService.updateStatus(id, status).catch(err => console.error('Supabase order update error:', err));
@@ -609,6 +714,17 @@ export const orderService = {
     // Broadcast Realtime Event
     realtimeSync.emit('ORDER_STATUS_CHANGED', { orderId: id, status, order: updated });
     return updated;
+  },
+  placeOrder: async (data: Omit<Order, 'id' | 'created_at' | 'updated_at' | 'items'> & { items: Omit<OrderItem, 'id' | 'order_id'>[] }): Promise<{ success: boolean; order: Order; error?: string }> => {
+    try {
+      if (!data.hotel_id) throw new Error('Missing hotel identifier.');
+      if (!data.items || data.items.length === 0) throw new Error('Order must contain at least 1 menu item.');
+      const order = orderService.create(data);
+      return { success: true, order };
+    } catch (err: any) {
+      console.error('[orderService.placeOrder] Failed:', err);
+      return { success: false, order: null as any, error: err?.message || 'Failed to dispatch order.' };
+    }
   },
 };
 
@@ -786,6 +902,16 @@ export const serviceRequestService = {
     // Broadcast Realtime Event
     realtimeSync.emit('REQUEST_STATUS_CHANGED', { requestId: id, status: data.status || updated.status, request: updated });
     return updated;
+  },
+  submitRequest: async (data: Omit<ServiceRequest, 'id' | 'created_at' | 'updated_at'>): Promise<{ success: boolean; request: ServiceRequest; error?: string }> => {
+    try {
+      if (!data.hotel_id) throw new Error('Missing hotel identifier.');
+      const req = serviceRequestService.create(data);
+      return { success: true, request: req };
+    } catch (err: any) {
+      console.error('[serviceRequestService.submitRequest] Failed:', err);
+      return { success: false, request: null as any, error: err?.message || 'Failed to submit service request.' };
+    }
   },
 };
 

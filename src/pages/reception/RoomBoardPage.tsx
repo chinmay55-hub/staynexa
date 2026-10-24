@@ -17,10 +17,12 @@ import { useAuth } from '../../contexts/AuthContext';
 import { 
   roomService, 
   reservationService, 
-  maintenanceService 
+  maintenanceService,
+  folioService,
+  reloadDemoStoreFromStorage
 } from '../../services/demoDataService';
 import { realtimeSync } from '../../services/realtimeSync';
-import type { Room, Reservation } from '../../types';
+import type { Room, Reservation, Folio } from '../../types';
 import { QuickCheckInModal } from '../../components/reception/QuickCheckInModal';
 import { RoomActionConsoleModal } from '../../components/reception/RoomActionConsoleModal';
 import { 
@@ -36,6 +38,7 @@ export default function RoomBoardPage() {
 
   const [rooms, setRooms] = useState(() => roomService.getAll(hotelId));
   const [reservations, setReservations] = useState(() => reservationService.getAll(hotelId));
+  const [folios, setFolios] = useState<Folio[]>(() => folioService.getAll(hotelId));
   const [maintenanceTickets] = useState(() => maintenanceService.getAll(hotelId));
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [hkFilter, setHkFilter] = useState<string>('ALL');
@@ -48,21 +51,30 @@ export default function RoomBoardPage() {
 
   // Synchronize state across tabs & central services in real time
   useEffect(() => {
-    const unsubRoom = realtimeSync.subscribe('ROOM_UPDATED', () => {
+    const disconnectSupabase = realtimeSync.connectSupabaseHotelChannel(hotelId);
+
+    const refreshBoard = () => {
+      reloadDemoStoreFromStorage();
       setRooms([...roomService.getAll(hotelId)]);
-    });
-    const unsubResCreated = realtimeSync.subscribe('RESERVATION_CREATED', () => {
       setReservations([...reservationService.getAll(hotelId)]);
-      setRooms([...roomService.getAll(hotelId)]);
-    });
-    const unsubResUpdated = realtimeSync.subscribe('RESERVATION_UPDATED', () => {
-      setReservations([...reservationService.getAll(hotelId)]);
-      setRooms([...roomService.getAll(hotelId)]);
-    });
+      setFolios([...folioService.getAll(hotelId)]);
+    };
+
+    const unsubRoom = realtimeSync.subscribe('ROOM_UPDATED', refreshBoard);
+    const unsubResCreated = realtimeSync.subscribe('RESERVATION_CREATED', refreshBoard);
+    const unsubResUpdated = realtimeSync.subscribe('RESERVATION_UPDATED', refreshBoard);
+    const unsubFolio = realtimeSync.subscribe('FOLIO_UPDATED', refreshBoard);
+    const unsubOrder = realtimeSync.subscribe('NEW_ORDER', refreshBoard);
+    const unsubOrderStatus = realtimeSync.subscribe('ORDER_STATUS_CHANGED', refreshBoard);
+
     return () => {
+      disconnectSupabase();
       unsubRoom();
       unsubResCreated();
       unsubResUpdated();
+      unsubFolio();
+      unsubOrder();
+      unsubOrderStatus();
     };
   }, [hotelId]);
 
@@ -158,16 +170,21 @@ export default function RoomBoardPage() {
                   <span className="text-xs text-stone-400">({floorRooms.length} rooms)</span>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3.5">
-                  {floorRooms.map(room => (
-                    <RoomCard 
-                      key={room.id} 
-                      room={room} 
-                      activeReservation={activeReservations.find(r => r.room_id === room.id)}
-                      hasMaintenance={maintenanceTickets.some(m => m.room_id === room.id && m.status !== 'CLOSED')}
-                      onClick={() => handleOpenRoom(room)}
-                      onQuickCheckIn={(id) => setCheckInRoomId(id)}
-                    />
-                  ))}
+                  {floorRooms.map(room => {
+                    const activeRes = activeReservations.find(r => r.room_id === room.id);
+                    const roomFolio = activeRes ? (folios.find(f => f.reservation_id === activeRes.id) || folioService.getByReservation(activeRes.id)) : undefined;
+                    return (
+                      <RoomCard 
+                        key={room.id} 
+                        room={room} 
+                        activeReservation={activeRes}
+                        folio={roomFolio}
+                        hasMaintenance={maintenanceTickets.some(m => m.room_id === room.id && m.status !== 'CLOSED')}
+                        onClick={() => handleOpenRoom(room)}
+                        onQuickCheckIn={(id) => setCheckInRoomId(id)}
+                      />
+                    );
+                  })}
                 </div>
               </div>
             );
@@ -175,16 +192,21 @@ export default function RoomBoardPage() {
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3.5">
-          {filteredRooms.map(room => (
-            <RoomCard 
-              key={room.id} 
-              room={room} 
-              activeReservation={activeReservations.find(r => r.room_id === room.id)}
-              hasMaintenance={maintenanceTickets.some(m => m.room_id === room.id && m.status !== 'CLOSED')}
-              onClick={() => handleOpenRoom(room)}
-              onQuickCheckIn={(id) => setCheckInRoomId(id)}
-            />
-          ))}
+          {filteredRooms.map(room => {
+            const activeRes = activeReservations.find(r => r.room_id === room.id);
+            const roomFolio = activeRes ? (folios.find(f => f.reservation_id === activeRes.id) || folioService.getByReservation(activeRes.id)) : undefined;
+            return (
+              <RoomCard 
+                key={room.id} 
+                room={room} 
+                activeReservation={activeRes}
+                folio={roomFolio}
+                hasMaintenance={maintenanceTickets.some(m => m.room_id === room.id && m.status !== 'CLOSED')}
+                onClick={() => handleOpenRoom(room)}
+                onQuickCheckIn={(id) => setCheckInRoomId(id)}
+              />
+            );
+          })}
         </div>
       )}
 
@@ -228,12 +250,14 @@ export default function RoomBoardPage() {
 function RoomCard({ 
   room, 
   activeReservation, 
+  folio,
   hasMaintenance, 
   onClick,
   onQuickCheckIn,
 }: { 
   room: Room; 
   activeReservation?: Reservation; 
+  folio?: Folio;
   hasMaintenance?: boolean; 
   onClick: () => void; 
   onQuickCheckIn?: (roomId: string) => void;
@@ -292,9 +316,20 @@ function RoomCard({
             + Check-In
           </button>
         ) : activeReservation?.guest ? (
-          <span className="text-[10px] text-stone-600 font-semibold truncate max-w-[80px]">
-            {activeReservation.guest.last_name}
-          </span>
+          <div className="flex items-center gap-1.5 truncate">
+            <span className="text-[10px] text-stone-600 font-semibold truncate max-w-[70px]">
+              {activeReservation.guest.last_name}
+            </span>
+            {folio && folio.outstanding > 0 ? (
+              <span className="text-[9px] px-1 py-0.2 rounded font-mono font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                ₹{folio.outstanding}
+              </span>
+            ) : folio ? (
+              <span className="text-[9px] px-1 py-0.2 rounded font-mono font-bold bg-emerald-100 text-emerald-800">
+                Paid
+              </span>
+            ) : null}
+          </div>
         ) : null}
       </div>
     </div>

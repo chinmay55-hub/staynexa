@@ -1,5 +1,5 @@
 // StayNexa Realtime Synchronization Engine
-// Bridges Supabase Realtime WebSockets and Cross-Tab BroadcastChannel / Event Bus
+// Bridges Supabase Realtime WebSockets, BroadcastChannel, and Cross-Tab Storage Events
 // Guarantees instant synchronization between Guest Portal, KDS, Reception, and Housekeeping
 
 import { supabase, isDemoMode } from '../lib/supabase';
@@ -40,19 +40,85 @@ class RealtimeSyncService {
   private broadcastChannel: BroadcastChannel | null = null;
   private listeners: Map<RealtimeEventType, Set<EventCallback<any>>> = new Map();
   private activeSupabaseChannels: Map<string, any> = new Map();
+  private globalSupabaseChannel: any = null;
+  private lastProcessedEventTimestamps: Set<string> = new Set();
 
   constructor() {
+    // 1. Initialize BroadcastChannel for modern browser tabs
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
       try {
         this.broadcastChannel = new BroadcastChannel('staynexa_realtime_bus');
         this.broadcastChannel.onmessage = (event) => {
           if (event.data && event.data.type && event.data.payload) {
-            this.dispatchLocal(event.data.type as RealtimeEventType, event.data.payload);
+            const eventKey = `${event.data.type}-${JSON.stringify(event.data.payload).slice(0, 40)}`;
+            if (!this.lastProcessedEventTimestamps.has(eventKey)) {
+              this.markProcessed(eventKey);
+              this.dispatchLocal(event.data.type as RealtimeEventType, event.data.payload);
+            }
           }
         };
       } catch (err) {
-        console.warn('BroadcastChannel initialization failed, falling back to in-memory bus:', err);
+        console.warn('BroadcastChannel initialization failed, falling back to storage bus:', err);
       }
+    }
+
+    // 2. Initialize Cross-Tab Storage Event listener (works across all browsers and window contexts)
+    if (typeof window !== 'undefined') {
+      window.addEventListener('storage', (event) => {
+        if (event.key === 'staynexa_global_sync' && event.newValue) {
+          try {
+            const data = JSON.parse(event.newValue);
+            if (data && data.type && data.payload) {
+              const eventKey = `${data.type}-${JSON.stringify(data.payload).slice(0, 40)}`;
+              if (!this.lastProcessedEventTimestamps.has(eventKey)) {
+                this.markProcessed(eventKey);
+                this.dispatchLocal(data.type as RealtimeEventType, data.payload);
+              }
+            }
+          } catch (e) {
+            console.warn('[RealtimeSync] Error parsing storage sync event:', e);
+          }
+        }
+      });
+    }
+
+    // 3. Initialize Supabase Realtime broadcast channel ('staynexa-global-sync')
+    this.initSupabaseGlobalChannel();
+  }
+
+  private markProcessed(key: string): void {
+    this.lastProcessedEventTimestamps.add(key);
+    if (this.lastProcessedEventTimestamps.size > 200) {
+      // Purge oldest entries
+      const iter = this.lastProcessedEventTimestamps.values();
+      for (let i = 0; i < 50; i++) {
+        const item = iter.next();
+        if (!item.done) this.lastProcessedEventTimestamps.delete(item.value);
+      }
+    }
+  }
+
+  private initSupabaseGlobalChannel(): void {
+    if (typeof window === 'undefined' || isDemoMode() || !supabase) return;
+
+    try {
+      this.globalSupabaseChannel = supabase.channel('staynexa-global-sync')
+        .on('broadcast', { event: 'staynexa-global-sync' }, ({ payload }) => {
+          if (payload && payload.type && payload.payload) {
+            const eventKey = `${payload.type}-${JSON.stringify(payload.payload).slice(0, 40)}`;
+            if (!this.lastProcessedEventTimestamps.has(eventKey)) {
+              this.markProcessed(eventKey);
+              this.dispatchLocal(payload.type as RealtimeEventType, payload.payload);
+            }
+          }
+        })
+        .subscribe((status) => {
+          if (status === 'SUBSCRIBED') {
+            console.info('[StayNexa Realtime] Subscribed to staynexa-global-sync broadcast channel');
+          }
+        });
+    } catch (err) {
+      console.warn('[RealtimeSync] Failed to initialize staynexa-global-sync channel:', err);
     }
   }
 
@@ -85,12 +151,15 @@ class RealtimeSyncService {
     }
   }
 
-  // Emit an event across all tabs and local listeners
+  // Emit an event across all local listeners, tabs, and remote WebSocket channels
   public emit<T extends RealtimeEventType>(type: T, payload: RealtimePayloadMap[T]): void {
-    // 1. Dispatch to local subscribers
+    const eventKey = `${type}-${JSON.stringify(payload).slice(0, 40)}`;
+    this.markProcessed(eventKey);
+
+    // 1. Dispatch to local subscribers in current window
     this.dispatchLocal(type, payload);
 
-    // 2. Broadcast across browser tabs
+    // 2. Broadcast across browser tabs via BroadcastChannel
     if (this.broadcastChannel) {
       try {
         this.broadcastChannel.postMessage({ type, payload });
@@ -98,12 +167,38 @@ class RealtimeSyncService {
         console.warn('Failed to postMessage on BroadcastChannel:', err);
       }
     }
+
+    // 3. Trigger cross-tab LocalStorage event (supported in all browsers/contexts)
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        localStorage.setItem('staynexa_global_sync', JSON.stringify({
+          type,
+          payload,
+          _ts: Date.now(),
+        }));
+      } catch {
+        // Ignore quota limits
+      }
+    }
+
+    // 4. Broadcast across network clients via Supabase Realtime channel
+    if (this.globalSupabaseChannel && supabase) {
+      try {
+        this.globalSupabaseChannel.send({
+          type: 'broadcast',
+          event: 'staynexa-global-sync',
+          payload: { type, payload },
+        }).catch((err: any) => console.warn('[RealtimeSync] Broadcast send failed:', err));
+      } catch (err) {
+        console.warn('[RealtimeSync] Supabase broadcast error:', err);
+      }
+    }
   }
 
   // Connect to Supabase Realtime WebSocket channel for a hotel
   public connectSupabaseHotelChannel(hotelId: string): () => void {
     if (isDemoMode() || !supabase) {
-      return () => {}; // In demo mode, BroadcastChannel handles cross-tab and in-memory events
+      return () => {}; // In demo mode, BroadcastChannel & storage events handle cross-tab synchronization
     }
 
     if (this.activeSupabaseChannels.has(hotelId)) {
@@ -117,13 +212,22 @@ class RealtimeSyncService {
           'postgres_changes',
           { event: '*', schema: 'public', table: 'orders', filter: `hotel_id=eq.${hotelId}` },
           (payload) => {
+            const rawOrder = payload.new as Order;
+            if (!rawOrder) return;
+
+            // Defensive enrichment: ensure items array exists to prevent UI render crashes
+            const safeOrder: Order = {
+              ...rawOrder,
+              items: rawOrder.items && Array.isArray(rawOrder.items) ? rawOrder.items : [],
+            };
+
             if (payload.eventType === 'INSERT') {
-              this.emit('NEW_ORDER', { order: payload.new as Order });
+              this.emit('NEW_ORDER', { order: safeOrder });
             } else if (payload.eventType === 'UPDATE') {
               this.emit('ORDER_STATUS_CHANGED', {
-                orderId: payload.new.id,
-                status: payload.new.status,
-                order: payload.new as Order,
+                orderId: rawOrder.id,
+                status: rawOrder.status,
+                order: safeOrder,
               });
             }
           }
@@ -133,13 +237,16 @@ class RealtimeSyncService {
           'postgres_changes',
           { event: '*', schema: 'public', table: 'service_requests', filter: `hotel_id=eq.${hotelId}` },
           (payload) => {
+            const rawReq = payload.new as ServiceRequest;
+            if (!rawReq) return;
+
             if (payload.eventType === 'INSERT') {
-              this.emit('NEW_SERVICE_REQUEST', { request: payload.new as ServiceRequest });
+              this.emit('NEW_SERVICE_REQUEST', { request: rawReq });
             } else if (payload.eventType === 'UPDATE') {
               this.emit('REQUEST_STATUS_CHANGED', {
-                requestId: payload.new.id,
-                status: payload.new.status,
-                request: payload.new as ServiceRequest,
+                requestId: rawReq.id,
+                status: rawReq.status,
+                request: rawReq,
               });
             }
           }

@@ -85,6 +85,8 @@ export default function GuestPortalPage() {
   const [paymentOption, setPaymentOption] = useState<'ROOM_CHARGE' | 'UPI'>('ROOM_CHARGE');
   const [orderSpecialInstructions, setOrderSpecialInstructions] = useState('');
   const [orderSuccessMsg, setOrderSuccessMsg] = useState(false);
+  const [orderErrorMsg, setOrderErrorMsg] = useState<string | null>(null);
+  const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
   const [myOrders, setMyOrders] = useState<Order[]>([]);
 
   // Services state
@@ -284,62 +286,53 @@ export default function GuestPortalPage() {
   const cartTotalItems = Object.values(cart).reduce((a, b) => a + b, 0);
 
   // Place Food Order
-  const handlePlaceOrder = () => {
-    if (!hotel || cartTotalItems === 0) return;
+  const handlePlaceOrder = async () => {
+    if (!hotel || cartTotalItems === 0 || isSubmittingOrder) return;
+    setIsSubmittingOrder(true);
+    setOrderErrorMsg(null);
 
-    const items = Object.entries(cart).map(([itemId, qty]) => {
-      const item = menuItems.find(i => i.id === itemId)!;
-      const sub = paymentService.roundCurrency(item.price * qty);
-      const tax = paymentService.roundCurrency((sub * (item.tax_percent || 5)) / 100);
-      return {
-        id: `oi-${Date.now()}-${itemId}`,
-        order_id: '',
-        menu_item_id: item.id,
-        name: item.name,
-        quantity: qty,
-        unit_price: item.price,
-        tax_percent: item.tax_percent || 5,
-        total: paymentService.roundCurrency(sub + tax),
-      };
-    });
-
-    const isRoomCharge = paymentOption === 'ROOM_CHARGE';
-
-    const newOrd = orderService.create({
-      hotel_id: hotel.id,
-      room_id: room?.id,
-      guest_id: guest?.id,
-      reservation_id: reservation?.id,
-      status: 'PENDING',
-      type: 'ROOM_SERVICE',
-      subtotal: cartSubtotal,
-      tax_amount: cartTax,
-      total: cartTotal,
-      charge_to_room: isRoomCharge,
-      special_instructions: orderSpecialInstructions || undefined,
-      items,
-    });
-
-    // Record charge on folio
-    if (folio) {
-      folioService.addItem({
-        folio_id: folio.id,
-        hotel_id: hotel.id,
-        description: `In-Room Dining: Order #${newOrd.id.slice(-6)}`,
-        category: 'ROOM_SERVICE',
-        quantity: 1,
-        unit_price: cartSubtotal,
-        tax_percent: 5,
-        tax_amount: cartTax,
-        discount_amount: 0,
-        total: cartTotal,
-        reference_id: newOrd.id,
-        posted_at: new Date().toISOString(),
-        posted_by: 'Guest QR Portal',
+    try {
+      const items = Object.entries(cart).map(([itemId, qty]) => {
+        const item = menuItems.find(i => i.id === itemId)!;
+        const sub = paymentService.roundCurrency(item.price * qty);
+        const tax = paymentService.roundCurrency((sub * (item.tax_percent || 5)) / 100);
+        return {
+          id: `oi-${Date.now()}-${itemId}`,
+          order_id: '',
+          menu_item_id: item.id,
+          name: item.name,
+          quantity: qty,
+          unit_price: item.price,
+          tax_percent: item.tax_percent || 5,
+          total: paymentService.roundCurrency(sub + tax),
+        };
       });
 
+      const isRoomCharge = paymentOption === 'ROOM_CHARGE';
+
+      const res = await orderService.placeOrder({
+        hotel_id: hotel.id,
+        room_id: room?.id,
+        guest_id: guest?.id,
+        reservation_id: reservation?.id,
+        status: 'PENDING',
+        type: 'ROOM_SERVICE',
+        subtotal: cartSubtotal,
+        tax_amount: cartTax,
+        total: cartTotal,
+        charge_to_room: isRoomCharge,
+        special_instructions: orderSpecialInstructions || undefined,
+        items,
+      });
+
+      if (!res.success || !res.order) {
+        throw new Error(res.error || 'Failed to place order.');
+      }
+
+      const newOrd = res.order;
+
       // If paid via online UPI, immediately record the payment settlement
-      if (paymentOption === 'UPI') {
+      if (paymentOption === 'UPI' && folio) {
         paymentService.recordPayment({
           hotelId: hotel.id,
           folioId: folio.id,
@@ -352,15 +345,26 @@ export default function GuestPortalPage() {
         });
       }
 
-      setFolio(folioService.getById(folio.id) || null);
-    }
+      // Refresh folio state
+      if (folio) {
+        setFolio(folioService.getById(folio.id) || null);
+      } else if (reservation) {
+        const freshFolio = folioService.getByReservation(reservation.id);
+        if (freshFolio) setFolio(freshFolio);
+      }
 
-    setMyOrders(prev => [newOrd, ...prev]);
-    setCart({});
-    setIsCartOpen(false);
-    setOrderSpecialInstructions('');
-    setOrderSuccessMsg(true);
-    setTimeout(() => setOrderSuccessMsg(false), 4000);
+      setMyOrders(prev => [newOrd, ...prev.filter(o => o.id !== newOrd.id)]);
+      setCart({});
+      setIsCartOpen(false);
+      setOrderSpecialInstructions('');
+      setOrderSuccessMsg(true);
+      setTimeout(() => setOrderSuccessMsg(false), 5000);
+    } catch (err: any) {
+      console.error('[GuestPortal] Order submission error:', err);
+      setOrderErrorMsg(err?.message || 'Unable to dispatch order. Please check network or front desk.');
+    } finally {
+      setIsSubmittingOrder(false);
+    }
   };
 
   // Place Service Request
@@ -573,6 +577,12 @@ export default function GuestPortalPage() {
             Your In-Room Dining order was placed and dispatched to the kitchen!
           </div>
         )}
+        {orderErrorMsg && (
+          <div className="bg-rose-600 text-white p-3 text-xs font-bold text-center flex items-center justify-center gap-2">
+            <AlertCircle className="w-4 h-4" />
+            {orderErrorMsg}
+          </div>
+        )}
         {requestSuccess && (
           <div className="bg-emerald-600 text-white p-3 text-xs font-bold text-center flex items-center justify-center gap-2">
             <CheckCircle2 className="w-4 h-4" />
@@ -775,7 +785,7 @@ export default function GuestPortalPage() {
                       <div className="flex justify-between items-start">
                         <div>
                           <span className="font-extrabold text-sm text-stone-900">Order #{ord.id.slice(-4).toUpperCase()}</span>
-                          <div className="text-[11px] text-stone-500">{ord.items.map(i => `${i.quantity}x ${i.name}`).join(', ')}</div>
+                          <div className="text-[11px] text-stone-500">{(ord.items || []).map(i => `${i.quantity}x ${i.name}`).join(', ')}</div>
                         </div>
                         <span className="font-bold text-xs text-[#c9a84c] font-mono">₹{ord.total}</span>
                       </div>
@@ -1092,9 +1102,9 @@ export default function GuestPortalPage() {
           size="sm"
           footer={
             <div className="flex justify-between items-center w-full">
-              <Button variant="outline" onClick={() => setIsCartOpen(false)}>Back</Button>
-              <Button variant="primary" onClick={handlePlaceOrder}>
-                {paymentOption === 'ROOM_CHARGE' ? 'Charge to Room Folio' : 'Pay via UPI Now'}
+              <Button variant="outline" onClick={() => setIsCartOpen(false)} disabled={isSubmittingOrder}>Back</Button>
+              <Button variant="primary" onClick={handlePlaceOrder} disabled={isSubmittingOrder}>
+                {isSubmittingOrder ? 'Dispatching Order...' : paymentOption === 'ROOM_CHARGE' ? 'Charge to Room Folio' : 'Pay via UPI Now'}
               </Button>
             </div>
           }

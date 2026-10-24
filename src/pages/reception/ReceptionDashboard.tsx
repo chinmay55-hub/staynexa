@@ -108,6 +108,10 @@ export default function ReceptionDashboard() {
       refreshData();
     });
 
+    const unsubFolio = realtimeSync.subscribe('FOLIO_UPDATED', () => {
+      refreshData();
+    });
+
     return () => {
       disconnectSupabase();
       unsubNewOrder();
@@ -116,6 +120,7 @@ export default function ReceptionDashboard() {
       unsubRequestStatus();
       unsubHousekeeping();
       unsubHousekeepingUpdate();
+      unsubFolio();
     };
   }, [hotelId]);
 

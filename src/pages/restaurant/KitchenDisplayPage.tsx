@@ -17,9 +17,11 @@ import {
   X
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
-import { orderService, hotelService } from '../../services/demoDataService';
+import { orderService, hotelService, reloadDemoStoreFromStorage } from '../../services/demoDataService';
+import { supabaseOrderService } from '../../services/supabaseService';
 import { audioService } from '../../services/audioService';
 import { realtimeSync } from '../../services/realtimeSync';
+import { isDemoMode, supabase } from '../../lib/supabase';
 import type { Order, OrderStatus } from '../../types';
 import { Button } from '../../components/ui';
 
@@ -52,10 +54,11 @@ export default function KitchenDisplayPage() {
   }, []);
 
   const refreshOrders = () => {
+    reloadDemoStoreFromStorage();
     setOrders([...orderService.getAll(hotelId)]);
   };
 
-  // Realtime WebSocket & Cross-Tab State Synchronization
+  // 1. Primary WebSocket Realtime Listener (Supabase Postgres Changes & BroadcastChannel)
   useEffect(() => {
     const disconnectSupabase = realtimeSync.connectSupabaseHotelChannel(hotelId);
 
@@ -67,9 +70,10 @@ export default function KitchenDisplayPage() {
         });
         audioService.playChime();
         const roomNum = order.room?.number || order.room_id || 'Guest Portal';
+        const itemCount = (order.items || []).length;
         setLiveAlertBanner({
           id: order.id,
-          message: `🔔 New Order #${order.id.slice(0, 8)} from Room ${roomNum} (${order.items.length} item${order.items.length > 1 ? 's' : ''})`,
+          message: `🔔 New Order #${order.id.slice(0, 8)} from Room ${roomNum} (${itemCount} item${itemCount > 1 ? 's' : ''})`,
         });
       }
     });
@@ -85,6 +89,58 @@ export default function KitchenDisplayPage() {
       unsubNewOrder();
       unsubOrderStatus();
     };
+  }, [hotelId]);
+
+  // 2. Secondary Infallible 5-Second Auto-Polling Fallback (guarantees zero missed tickets even on WebSocket disconnect)
+  useEffect(() => {
+    const pollInterval = setInterval(async () => {
+      try {
+        reloadDemoStoreFromStorage();
+        let freshOrders = orderService.getAll(hotelId);
+
+        // If Supabase is active in production, poll direct from PostgreSQL table
+        if (!isDemoMode() && supabase) {
+          try {
+            const remoteOrders = await supabaseOrderService.getAll(hotelId);
+            if (remoteOrders && remoteOrders.length > 0) {
+              freshOrders = remoteOrders;
+            }
+          } catch (e) {
+            // gracefully fallback to local store
+          }
+        }
+
+        // Compare and alert on new PENDING orders
+        setOrders(prevOrders => {
+          const prevMap = new Map(prevOrders.map(o => [o.id, o]));
+          let foundNewPending = false;
+          let newestPendingOrder: Order | null = null;
+
+          freshOrders.forEach(fo => {
+            const existing = prevMap.get(fo.id);
+            if (!existing && fo.status === 'PENDING') {
+              foundNewPending = true;
+              newestPendingOrder = fo;
+            }
+          });
+
+          if (foundNewPending && newestPendingOrder) {
+            audioService.playChime();
+            const roomNum = (newestPendingOrder as Order).room?.number || (newestPendingOrder as Order).room_id || 'Portal';
+            setLiveAlertBanner({
+              id: (newestPendingOrder as Order).id,
+              message: `🔔 New Order #${(newestPendingOrder as Order).id.slice(-6).toUpperCase()} from Room ${roomNum}`,
+            });
+          }
+
+          return freshOrders;
+        });
+      } catch (err) {
+        console.warn('[KDS] Polling error:', err);
+      }
+    }, 5000);
+
+    return () => clearInterval(pollInterval);
   }, [hotelId]);
 
   // Auto-dismiss live alert banner after 8 seconds
@@ -530,7 +586,7 @@ export default function KitchenDisplayPage() {
                     <span>STATION</span>
                   </div>
                   <div className="space-y-1.5">
-                    {selectedKotOrder.items.map(i => (
+                    {(selectedKotOrder.items || []).map(i => (
                       <div key={i.id} className="flex justify-between items-start">
                         <div className="font-bold text-xs">
                           <span className="text-sm font-black mr-2">[{i.quantity}]</span>
@@ -619,7 +675,7 @@ function KdsCard({
 
       {/* Items list */}
       <div className="space-y-1.5 py-2 border-y border-white/5 text-sm">
-        {order.items.map(item => (
+        {(order.items || []).map(item => (
           <div key={item.id} className="flex justify-between items-baseline">
             <span className="font-semibold text-white">
               <span className="text-[#c9a84c] font-black mr-2 text-base">{item.quantity}x</span>
