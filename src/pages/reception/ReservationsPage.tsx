@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Calendar, 
   Search, 
@@ -9,11 +9,6 @@ import {
   LogIn, 
   Eye, 
   X, 
-  Check, 
-  IndianRupee, 
-  Clock,
-  Building2,
-  AlertCircle,
   CheckCircle2
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
@@ -22,22 +17,18 @@ import {
   roomService, 
   guestService, 
   folioService, 
-  hotelService,
   activityLogService
 } from '../../services/demoDataService';
+import { realtimeSync } from '../../services/realtimeSync';
 import type { 
   Reservation, 
-  ReservationStatus, 
   BookingSource, 
-  Room, 
-  Guest,
   PaymentMethod
 } from '../../types';
 import { QuickCheckInModal } from '../../components/reception/QuickCheckInModal';
 import { 
   Card, 
   CardContent, 
-  CardHeader, 
   Button, 
   Input, 
   Select, 
@@ -51,8 +42,29 @@ export default function ReservationsPage() {
 
   const [reservations, setReservations] = useState(() => reservationService.getAll(hotelId));
   const [guests, setGuests] = useState(() => guestService.getAll(hotelId));
-  const [rooms, setRooms] = useState(() => roomService.getAll(hotelId));
+  const [, setRooms] = useState(() => roomService.getAll(hotelId));
   const [roomTypes] = useState(() => roomService.getTypes(hotelId));
+
+  // Real-time synchronization across rooms and reservations
+  useEffect(() => {
+    const unsubCreated = realtimeSync.subscribe('RESERVATION_CREATED', () => {
+      setReservations([...reservationService.getAll(hotelId)]);
+      setGuests([...guestService.getAll(hotelId)]);
+      setRooms([...roomService.getAll(hotelId)]);
+    });
+    const unsubUpdated = realtimeSync.subscribe('RESERVATION_UPDATED', () => {
+      setReservations([...reservationService.getAll(hotelId)]);
+      setRooms([...roomService.getAll(hotelId)]);
+    });
+    const unsubRoom = realtimeSync.subscribe('ROOM_UPDATED', () => {
+      setRooms([...roomService.getAll(hotelId)]);
+    });
+    return () => {
+      unsubCreated();
+      unsubUpdated();
+      unsubRoom();
+    };
+  }, [hotelId]);
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');

@@ -287,6 +287,7 @@ export const roomService = {
     if (!isDemoMode() && supabase) {
       supabaseRoomService.update(id, data).catch(err => console.error('Supabase room update error:', err));
     }
+    realtimeSync.emit('ROOM_UPDATED', { room: rooms[idx] });
     return rooms[idx];
   },
   updateStatus: (id: string, status: Room['status'], housekeeping_status?: Room['housekeeping_status']): Room | undefined => {
@@ -297,6 +298,7 @@ export const roomService = {
     if (!isDemoMode() && supabase) {
       supabaseRoomService.updateStatus(id, status, housekeeping_status).catch(err => console.error('Supabase room status error:', err));
     }
+    realtimeSync.emit('ROOM_UPDATED', { room: rooms[idx] });
     return rooms[idx];
   },
   getAvailable: (hotelId: string, checkIn: string, checkOut: string, roomTypeId?: string): Room[] => {
@@ -396,6 +398,7 @@ export const reservationService = {
     if (!isDemoMode() && supabase) {
       supabaseReservationService.create(data).catch(err => console.error('Supabase reservation create error:', err));
     }
+    realtimeSync.emit('RESERVATION_CREATED', { reservation: res });
     return res;
   },
   update: (id: string, data: Partial<Reservation>): Reservation | undefined => {
@@ -406,6 +409,7 @@ export const reservationService = {
     if (!isDemoMode() && supabase) {
       supabaseReservationService.update(id, data).catch(err => console.error('Supabase reservation update error:', err));
     }
+    realtimeSync.emit('RESERVATION_UPDATED', { reservation: reservations[idx] });
     return reservations[idx];
   },
   checkIn: (id: string, roomId: string): Reservation | undefined => {
@@ -429,6 +433,8 @@ export const reservationService = {
     if (!isDemoMode() && supabase) {
       supabaseReservationService.checkIn(id, roomId).catch(err => console.error('Supabase checkin error:', err));
     }
+    realtimeSync.emit('RESERVATION_UPDATED', { reservation: reservations[idx] });
+    if (roomIdx !== -1) realtimeSync.emit('ROOM_UPDATED', { room: rooms[roomIdx] });
     return reservations[idx];
   },
   checkOut: (id: string): Reservation | undefined => {
@@ -437,16 +443,20 @@ export const reservationService = {
     const res = reservations[idx];
     reservations[idx] = { ...res, status: 'CHECKED_OUT', actual_check_out: now(), updated_at: now() };
     // Mark room as dirty
+    let updatedRoom: Room | undefined;
     if (res.room_id) {
       const roomIdx = rooms.findIndex(r => r.id === res.room_id);
       if (roomIdx !== -1) {
         rooms[roomIdx] = { ...rooms[roomIdx], status: 'AVAILABLE', housekeeping_status: 'DIRTY' };
+        updatedRoom = rooms[roomIdx];
       }
     }
     saveDemoStore();
     if (!isDemoMode() && supabase) {
       supabaseReservationService.checkOut(id).catch(err => console.error('Supabase checkout error:', err));
     }
+    realtimeSync.emit('RESERVATION_UPDATED', { reservation: reservations[idx] });
+    if (updatedRoom) realtimeSync.emit('ROOM_UPDATED', { room: updatedRoom });
     return reservations[idx];
   },
   getTodayArrivals: (hotelId: string): Reservation[] => {
@@ -503,6 +513,7 @@ export const folioService = {
     const status = outstanding <= 0 ? 'PAID' : totalPayments > 0 ? 'PARTIAL' : 'PENDING';
     folios[idx] = { ...folios[idx], total_charges: totalCharges, total_payments: totalPayments, outstanding, status, updated_at: now() };
     saveDemoStore();
+    realtimeSync.emit('FOLIO_UPDATED', { folio: folios[idx] });
   },
 };
 
@@ -845,7 +856,7 @@ export const qrService = {
   generate: (hotelId: string, roomId?: string): QRCode => {
     const token = `sn-${Math.random().toString(36).slice(2, 12)}`;
     const qr: QRCode = {
-      id: uuid(), hotel_id: hotelId, room_id: roomId, token, url: `/guest/${token}`,
+      id: uuid(), hotel_id: hotelId, room_id: roomId, token, url: `/q/${token}`,
       type: roomId ? 'ROOM' : 'HOTEL', is_active: true, created_at: now(),
     };
     qrCodes.push(qr);

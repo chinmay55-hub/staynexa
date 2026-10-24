@@ -446,9 +446,9 @@ export const DEMO_MEMBERSHIPS: HotelMembership[] = [
 // ─── QR Codes ─────────────────────────────────────────────────────────────────
 
 export const DEMO_QR_CODES: QRCode[] = [
-  { id: 'qr-001', hotel_id: 'hotel-001', room_id: 'room-001', token: 'gp-r101-abc123', url: '/guest/gp-r101-abc123', type: 'ROOM', is_active: true, created_at: '2024-01-16T10:00:00Z' },
-  { id: 'qr-002', hotel_id: 'hotel-001', room_id: 'room-002', token: 'gp-r102-def456', url: '/guest/gp-r102-def456', type: 'ROOM', is_active: true, created_at: '2024-01-16T10:00:00Z' },
-  { id: 'qr-003', hotel_id: 'hotel-003', room_id: 'room-201', token: 'ac-v01-ghi789', url: '/guest/ac-v01-ghi789', type: 'ROOM', is_active: true, created_at: '2024-03-11T10:00:00Z' },
+  { id: 'qr-001', hotel_id: 'hotel-001', room_id: 'room-001', token: 'gp-r101-abc123', url: '/q/gp-r101-abc123', type: 'ROOM', is_active: true, created_at: '2024-01-16T10:00:00Z' },
+  { id: 'qr-002', hotel_id: 'hotel-001', room_id: 'room-002', token: 'gp-r102-def456', url: '/q/gp-r102-def456', type: 'ROOM', is_active: true, created_at: '2024-01-16T10:00:00Z' },
+  { id: 'qr-003', hotel_id: 'hotel-003', room_id: 'room-201', token: 'ac-v01-ghi789', url: '/q/ac-v01-ghi789', type: 'ROOM', is_active: true, created_at: '2024-03-11T10:00:00Z' },
 ];
 
 // ─── Notifications ────────────────────────────────────────────────────────────

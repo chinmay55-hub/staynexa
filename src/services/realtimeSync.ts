@@ -3,7 +3,7 @@
 // Guarantees instant synchronization between Guest Portal, KDS, Reception, and Housekeeping
 
 import { supabase, isDemoMode } from '../lib/supabase';
-import type { Order, ServiceRequest, HousekeepingTask, Notification, ActivityLog } from '../types';
+import type { Order, ServiceRequest, HousekeepingTask, Notification, ActivityLog, Reservation, Room, Folio } from '../types';
 
 export type RealtimeEventType = 
   | 'NEW_ORDER'
@@ -13,7 +13,11 @@ export type RealtimeEventType =
   | 'NEW_HOUSEKEEPING_TASK'
   | 'HOUSEKEEPING_TASK_UPDATED'
   | 'NEW_NOTIFICATION'
-  | 'NEW_ACTIVITY_LOG';
+  | 'NEW_ACTIVITY_LOG'
+  | 'RESERVATION_CREATED'
+  | 'RESERVATION_UPDATED'
+  | 'ROOM_UPDATED'
+  | 'FOLIO_UPDATED';
 
 export interface RealtimePayloadMap {
   NEW_ORDER: { order: Order };
@@ -24,6 +28,10 @@ export interface RealtimePayloadMap {
   HOUSEKEEPING_TASK_UPDATED: { taskId: string; task: HousekeepingTask };
   NEW_NOTIFICATION: { notification: Notification };
   NEW_ACTIVITY_LOG: { log: ActivityLog };
+  RESERVATION_CREATED: { reservation: Reservation };
+  RESERVATION_UPDATED: { reservation: Reservation };
+  ROOM_UPDATED: { room: Room };
+  FOLIO_UPDATED: { folio: Folio };
 }
 
 type EventCallback<T extends RealtimeEventType> = (payload: RealtimePayloadMap[T]) => void;

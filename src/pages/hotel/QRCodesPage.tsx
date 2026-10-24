@@ -14,6 +14,7 @@ import {
 import QRCode from 'qrcode';
 import { useAuth } from '../../contexts/AuthContext';
 import { qrService, roomService, hotelService } from '../../services/demoDataService';
+import { generateGuestPortalUrl } from '../../utils/qrCode';
 import type { QRCode as QRCodeType, Room } from '../../types';
 import { Card, CardContent, CardHeader, Button, Badge, Modal } from '../../components/ui';
 
@@ -32,7 +33,7 @@ export default function QRCodesPage() {
   // Generate QR data URL when preview opens
   useEffect(() => {
     if (previewQr) {
-      const fullUrl = `${window.location.origin}/guest/${previewQr.token}`;
+      const fullUrl = generateGuestPortalUrl(previewQr.token);
       QRCode.toDataURL(fullUrl, { width: 250, margin: 2, color: { dark: '#1a2744', light: '#ffffff' } })
         .then((url: string) => setQrDataUrl(url))
         .catch((err: any) => console.error('QR Gen error:', err));
@@ -45,7 +46,7 @@ export default function QRCodesPage() {
       rooms.forEach(room => {
         const qr = qrCodes.find(q => q.room_id === room.id && q.is_active);
         const token = qr?.token || `gp-r${room.number}-demo`;
-        const fullUrl = `${window.location.origin}/guest/${token}`;
+        const fullUrl = generateGuestPortalUrl(token);
         QRCode.toDataURL(fullUrl, { width: 180, margin: 1, color: { dark: '#1a2744', light: '#ffffff' } })
           .then((url: string) => {
             setBulkQrUrls(prev => ({ ...prev, [room.id]: url }));
@@ -150,12 +151,12 @@ export default function QRCodesPage() {
                       <td className="py-3.5 px-4 text-xs font-mono text-stone-600">
                         {qr ? (
                           <a 
-                            href={`/guest/${qr.token}`} 
+                            href={`/q/${qr.token}`} 
                             target="_blank" 
                             rel="noreferrer"
                             className="text-[#c9a84c] hover:underline flex items-center gap-1 font-semibold"
                           >
-                            /guest/{qr.token} <ExternalLink className="w-3 h-3" />
+                            /q/{qr.token} <ExternalLink className="w-3 h-3" />
                           </a>
                         ) : (
                           <span className="text-stone-400">No active QR generated</span>

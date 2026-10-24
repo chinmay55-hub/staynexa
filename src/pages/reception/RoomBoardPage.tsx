@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   BedDouble, 
   Search, 
@@ -17,22 +17,17 @@ import { useAuth } from '../../contexts/AuthContext';
 import { 
   roomService, 
   reservationService, 
-  guestService, 
-  folioService, 
-  maintenanceService,
-  activityLogService
+  maintenanceService 
 } from '../../services/demoDataService';
-import type { Room, RoomStatus, HousekeepingStatus, Reservation, Folio } from '../../types';
+import { realtimeSync } from '../../services/realtimeSync';
+import type { Room, Reservation } from '../../types';
 import { QuickCheckInModal } from '../../components/reception/QuickCheckInModal';
+import { RoomActionConsoleModal } from '../../components/reception/RoomActionConsoleModal';
 import { 
   Card, 
   CardContent, 
-  CardHeader, 
   Button, 
-  Badge, 
-  RoomStatusBadge, 
-  HousekeepingBadge, 
-  Modal 
+  HousekeepingBadge 
 } from '../../components/ui';
 
 export default function RoomBoardPage() {
@@ -51,6 +46,26 @@ export default function RoomBoardPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [checkInRoomId, setCheckInRoomId] = useState<string | null>(null);
 
+  // Synchronize state across tabs & central services in real time
+  useEffect(() => {
+    const unsubRoom = realtimeSync.subscribe('ROOM_UPDATED', () => {
+      setRooms([...roomService.getAll(hotelId)]);
+    });
+    const unsubResCreated = realtimeSync.subscribe('RESERVATION_CREATED', () => {
+      setReservations([...reservationService.getAll(hotelId)]);
+      setRooms([...roomService.getAll(hotelId)]);
+    });
+    const unsubResUpdated = realtimeSync.subscribe('RESERVATION_UPDATED', () => {
+      setReservations([...reservationService.getAll(hotelId)]);
+      setRooms([...roomService.getAll(hotelId)]);
+    });
+    return () => {
+      unsubRoom();
+      unsubResCreated();
+      unsubResUpdated();
+    };
+  }, [hotelId]);
+
   const activeReservations = reservations.filter(r => r.status === 'CHECKED_IN');
 
   const filteredRooms = rooms.filter(room => {
@@ -66,41 +81,6 @@ export default function RoomBoardPage() {
     setSelectedRoom(room);
     setIsModalOpen(true);
   };
-
-  const handleUpdateHK = (newHk: HousekeepingStatus) => {
-    if (!selectedRoom) return;
-    const updated = roomService.update(selectedRoom.id, { housekeeping_status: newHk });
-    if (updated) {
-      setRooms([...roomService.getAll(hotelId)]);
-      setSelectedRoom(updated);
-      activityLogService.log({
-        hotel_id: hotelId,
-        user_id: user?.id,
-        actor_name: user?.full_name,
-        action: 'UPDATE_HOUSEKEEPING',
-        entity_type: 'room',
-        entity_id: selectedRoom.id,
-        metadata: { room: selectedRoom.number, new_status: newHk }
-      });
-    }
-  };
-
-  const handleUpdateStatus = (newStatus: RoomStatus) => {
-    if (!selectedRoom) return;
-    const updated = roomService.update(selectedRoom.id, { status: newStatus });
-    if (updated) {
-      setRooms([...roomService.getAll(hotelId)]);
-      setSelectedRoom(updated);
-    }
-  };
-
-  const currentReservation = selectedRoom 
-    ? activeReservations.find(r => r.room_id === selectedRoom.id)
-    : null;
-
-  const roomFolio = currentReservation
-    ? folioService.getByReservation(currentReservation.id)
-    : null;
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
@@ -208,148 +188,22 @@ export default function RoomBoardPage() {
         </div>
       )}
 
-      {/* Room Detail Modal */}
+      {/* All-in-One Room Action Console Modal */}
       {selectedRoom && (
-        <Modal
+        <RoomActionConsoleModal
           isOpen={isModalOpen}
+          room={selectedRoom}
+          hotelId={hotelId}
           onClose={() => setIsModalOpen(false)}
-          title={`Room ${selectedRoom.number} Overview`}
-          size="md"
-          footer={
-            <div className="flex justify-end w-full">
-              <Button variant="outline" onClick={() => setIsModalOpen(false)}>Done</Button>
-            </div>
-          }
-        >
-          <div className="space-y-5">
-            {/* Header info */}
-            <div className="flex items-center justify-between p-3.5 rounded-xl bg-stone-50 border border-stone-200">
-              <div>
-                <div className="text-xs text-stone-500">Type & Floor</div>
-                <div className="font-bold text-stone-900">{selectedRoom.room_type?.name || 'Standard'} (Floor {selectedRoom.floor})</div>
-              </div>
-              <div className="flex flex-col items-end gap-1">
-                <RoomStatusBadge status={selectedRoom.status} />
-                <HousekeepingBadge status={selectedRoom.housekeeping_status} />
-              </div>
-            </div>
-
-            {/* Express Check-In Card for Available Rooms */}
-            {selectedRoom.status === 'AVAILABLE' && (
-              <div className="p-3.5 rounded-xl border border-[#c9a84c]/40 bg-[#c9a84c]/10 flex items-center justify-between gap-3">
-                <div>
-                  <span className="text-xs font-bold text-stone-900 block">Vacant & Clean Room</span>
-                  <span className="text-[11px] text-stone-600">Instantly allocate an arriving guest or register a walk-in</span>
-                </div>
-                <Button 
-                  variant="primary" 
-                  size="sm"
-                  onClick={() => {
-                    setIsModalOpen(false);
-                    setCheckInRoomId(selectedRoom.id);
-                  }}
-                  className="shrink-0"
-                >
-                  ⚡ Express Check-In
-                </Button>
-              </div>
-            )}
-
-            {/* Current Guest info if occupied */}
-            {currentReservation ? (
-              <div className="p-4 rounded-xl border border-blue-100 bg-blue-50/30 space-y-2">
-                <div className="text-xs font-bold text-blue-900 uppercase tracking-wider">Current Guest Occupant</div>
-                <div className="font-semibold text-stone-900 text-sm">
-                  {currentReservation.guest ? `${currentReservation.guest.first_name} ${currentReservation.guest.last_name}` : 'Registered Guest'}
-                </div>
-                <div className="text-xs text-stone-600 flex justify-between">
-                  <span>Stay: {currentReservation.check_in_date} to {currentReservation.check_out_date}</span>
-                  <span>{currentReservation.adults} Adults, {currentReservation.children} Child</span>
-                </div>
-                {roomFolio && (
-                  <div className="pt-2 border-t border-blue-100 text-xs flex justify-between font-medium">
-                    <span>Folio Outstanding:</span>
-                    <span className={roomFolio.outstanding > 0 ? 'text-rose-600 font-bold' : 'text-emerald-700 font-bold'}>
-                      ₹{roomFolio.outstanding.toLocaleString('en-IN')}
-                    </span>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="p-4 rounded-xl border border-dashed border-stone-200 text-center text-xs text-stone-400">
-                No active checked-in reservation for this room.
-              </div>
-            )}
-
-            {/* Quick Actions: Housekeeping State */}
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-stone-600 mb-2">
-                Update Housekeeping Condition
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                <Button 
-                  size="sm" 
-                  variant={selectedRoom.housekeeping_status === 'CLEAN' ? 'primary' : 'outline'}
-                  onClick={() => handleUpdateHK('CLEAN')}
-                >
-                  Mark Clean
-                </Button>
-                <Button 
-                  size="sm" 
-                  variant={selectedRoom.housekeeping_status === 'DIRTY' ? 'secondary' : 'outline'}
-                  onClick={() => handleUpdateHK('DIRTY')}
-                >
-                  Mark Dirty
-                </Button>
-                <Button 
-                  size="sm" 
-                  variant={selectedRoom.housekeeping_status === 'CLEANING' ? 'primary' : 'outline'}
-                  onClick={() => handleUpdateHK('CLEANING')}
-                >
-                  Mark Cleaning
-                </Button>
-                <Button 
-                  size="sm" 
-                  variant={selectedRoom.housekeeping_status === 'INSPECTION_REQUIRED' ? 'secondary' : 'outline'}
-                  onClick={() => handleUpdateHK('INSPECTION_REQUIRED')}
-                >
-                  Needs Inspection
-                </Button>
-              </div>
-            </div>
-
-            {/* Room Operational State */}
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-stone-600 mb-2">
-                Operational State
-              </label>
-              <div className="grid grid-cols-3 gap-2">
-                <Button 
-                  size="sm" 
-                  variant="outline"
-                  onClick={() => handleUpdateStatus('AVAILABLE')}
-                  disabled={selectedRoom.status === 'OCCUPIED'}
-                >
-                  Available
-                </Button>
-                <Button 
-                  size="sm" 
-                  variant="outline"
-                  onClick={() => handleUpdateStatus('MAINTENANCE')}
-                >
-                  Maintenance
-                </Button>
-                <Button 
-                  size="sm" 
-                  variant="outline"
-                  onClick={() => handleUpdateStatus('OUT_OF_SERVICE')}
-                >
-                  Out of Order
-                </Button>
-              </div>
-            </div>
-          </div>
-        </Modal>
+          onOpenQuickCheckIn={(roomId) => {
+            setIsModalOpen(false);
+            setCheckInRoomId(roomId);
+          }}
+          onRoomUpdated={(updatedRoom) => {
+            setRooms([...roomService.getAll(hotelId)]);
+            setSelectedRoom(updatedRoom);
+          }}
+        />
       )}
 
       {/* 3-Step Express Check-In Modal */}

@@ -22,6 +22,7 @@ import { audioService } from '../services/audioService';
 import { paymentService } from '../services/paymentService';
 import { realtimeSync } from '../services/realtimeSync';
 import { parseDatabaseError } from '../lib/errorHandler';
+import { generateGuestPortalUrl, getBaseUrl } from '../utils/qrCode';
 
 describe('STAYNEXA CORE HOTEL OPERATING SYSTEM TEST SUITE', () => {
 
@@ -663,6 +664,22 @@ describe('STAYNEXA CORE HOTEL OPERATING SYSTEM TEST SUITE', () => {
       // In demo mode or unconfigured supabase, syncFromSupabase returns false gracefully without throwing
       const result = await demoDataService.syncFromSupabase('hotel-001');
       expect(typeof result).toBe('boolean');
+    });
+  });
+
+  // ─── 13. DYNAMIC PRODUCTION QR URL & GUEST PORTAL ROUTING ────────────────
+  describe('Dynamic Production QR Base URL & Guest Portal Routing', () => {
+    it('should generate canonical /q/:token url with current origin', () => {
+      const url = generateGuestPortalUrl('test-token-123');
+      expect(url).toContain('/q/test-token-123');
+      expect(url.startsWith('http')).toBe(true);
+    });
+
+    it('should provide dynamic base URL matching window origin or fallback', () => {
+      const base = getBaseUrl();
+      expect(base).toBeDefined();
+      expect(typeof base).toBe('string');
+      expect(base.length).toBeGreaterThan(0);
     });
   });
 });
