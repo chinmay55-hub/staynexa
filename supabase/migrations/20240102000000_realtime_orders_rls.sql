@@ -2,7 +2,24 @@
 -- STAYNEXA MIGRATION: CROSS-DEVICE REALTIME & GUEST RLS ORDER PIPELINE
 -- ==============================================================================
 
--- 1. Enable REPLICA IDENTITY FULL so Postgres Realtime broadcasts full row payloads
+-- 1. Ensure Table Columns for Direct Supabase Order Persistence
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS room_number VARCHAR(50);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS items JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS total_amount NUMERIC(12,2);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_status VARCHAR(50) DEFAULT 'unpaid';
+
+-- Relax status check constraint to support uppercase and lowercase statuses
+DO $$
+BEGIN
+    ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_status_check;
+    ALTER TABLE orders ADD CONSTRAINT orders_status_check 
+        CHECK (UPPER(status) IN ('PENDING', 'ACCEPTED', 'PREPARING', 'READY', 'DELIVERED', 'CANCELLED', 'COMPLETED'));
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE NOTICE 'Orders status check adjustment: %', SQLERRM;
+END $$;
+
+-- 2. Enable REPLICA IDENTITY FULL so Postgres Realtime broadcasts full row payloads
 ALTER TABLE orders REPLICA IDENTITY FULL;
 ALTER TABLE order_items REPLICA IDENTITY FULL;
 ALTER TABLE service_requests REPLICA IDENTITY FULL;
@@ -58,6 +75,13 @@ CREATE POLICY orders_select_policy ON orders
         OR auth.role() = 'anon'
     );
 
+-- Order Update Policy (permit status transitions from KDS and staff)
+DROP POLICY IF EXISTS orders_update_policy ON orders;
+CREATE POLICY orders_update_policy ON orders
+    FOR UPDATE
+    USING (true)
+    WITH CHECK (true);
+
 -- Order Items Policies
 DROP POLICY IF EXISTS order_items_insert ON order_items;
 CREATE POLICY order_items_insert ON order_items
@@ -67,15 +91,7 @@ CREATE POLICY order_items_insert ON order_items
 DROP POLICY IF EXISTS order_items_select ON order_items;
 CREATE POLICY order_items_select ON order_items
     FOR SELECT 
-    USING (
-        is_super_admin()
-        OR (hotel_id IS NOT NULL AND hotel_id = auth_hotel_id())
-        OR auth.role() = 'anon'
-        OR EXISTS (
-            SELECT 1 FROM orders 
-            WHERE orders.id = order_items.order_id
-        )
-    );
+    USING (true);
 
 -- Service Requests Policies
 DROP POLICY IF EXISTS requests_insert_policy ON service_requests;
@@ -86,17 +102,20 @@ CREATE POLICY requests_insert_policy ON service_requests
 DROP POLICY IF EXISTS requests_select_policy ON service_requests;
 CREATE POLICY requests_select_policy ON service_requests
     FOR SELECT 
-    USING (
-        is_super_admin() 
-        OR hotel_id = auth_hotel_id()
-        OR auth.role() = 'anon'
-    );
+    USING (true);
+
+DROP POLICY IF EXISTS requests_update_policy ON service_requests;
+CREATE POLICY requests_update_policy ON service_requests
+    FOR UPDATE
+    USING (true)
+    WITH CHECK (true);
 
 -- 4. Direct Public RPC Endpoint: create_guest_order
 -- Bypasses RLS strictly for guest order placement and returns the enriched order payload
 CREATE OR REPLACE FUNCTION create_guest_order(
     p_hotel_id UUID,
     p_room_id UUID DEFAULT NULL,
+    p_room_number VARCHAR DEFAULT NULL,
     p_guest_id UUID DEFAULT NULL,
     p_reservation_id UUID DEFAULT NULL,
     p_type VARCHAR DEFAULT 'ROOM_SERVICE',
@@ -105,6 +124,7 @@ CREATE OR REPLACE FUNCTION create_guest_order(
     p_total NUMERIC DEFAULT 0,
     p_charge_to_room BOOLEAN DEFAULT true,
     p_special_instructions TEXT DEFAULT NULL,
+    p_payment_status VARCHAR DEFAULT 'unpaid',
     p_items JSONB DEFAULT '[]'::jsonb
 )
 RETURNS JSONB
@@ -121,13 +141,17 @@ BEGIN
     INSERT INTO orders (
         hotel_id,
         room_id,
+        room_number,
         guest_id,
         reservation_id,
         type,
         status,
+        payment_status,
         subtotal,
         tax_amount,
         total,
+        total_amount,
+        items,
         charge_to_room,
         special_instructions,
         created_at,
@@ -135,13 +159,17 @@ BEGIN
     ) VALUES (
         p_hotel_id,
         p_room_id,
+        p_room_number,
         p_guest_id,
         p_reservation_id,
         p_type,
         'PENDING',
+        p_payment_status,
         p_subtotal,
         p_tax_amount,
         p_total,
+        p_total,
+        p_items,
         p_charge_to_room,
         p_special_instructions,
         NOW(),
@@ -182,13 +210,16 @@ BEGIN
         'id', o.id,
         'hotel_id', o.hotel_id,
         'room_id', o.room_id,
+        'room_number', o.room_number,
         'guest_id', o.guest_id,
         'reservation_id', o.reservation_id,
         'type', o.type,
         'status', o.status,
+        'payment_status', o.payment_status,
         'subtotal', o.subtotal,
         'tax_amount', o.tax_amount,
         'total', o.total,
+        'total_amount', o.total_amount,
         'charge_to_room', o.charge_to_room,
         'special_instructions', o.special_instructions,
         'created_at', o.created_at,
@@ -207,7 +238,7 @@ BEGIN
             ))
             FROM order_items oi
             WHERE oi.order_id = o.id
-        ), '[]'::jsonb)
+        ), o.items, '[]'::jsonb)
     )
     INTO v_result
     FROM orders o

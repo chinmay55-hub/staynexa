@@ -24,6 +24,7 @@ import {
 
 import { realtimeSync } from './realtimeSync';
 import { isDemoMode, supabase } from '../lib/supabase';
+import { orderService, registerOrderStoreAdapter } from './orderService';
 import { 
   supabaseHotelService,
   supabaseRoomService,
@@ -622,111 +623,53 @@ export const menuService = {
   getItemById: (id: string): MenuItem | undefined => menuItems.find(i => i.id === id),
 };
 
-export const orderService = {
+// Register store adapter with orderService for demo/offline synchronization
+registerOrderStoreAdapter({
   getAll: (hotelId: string): Order[] =>
     orders.filter(o => o.hotel_id === hotelId).map(o => ({
       ...o,
-      room: rooms.find(r => r.id === o.room_id),
-      guest: guests.find(g => g.id === o.guest_id),
+      room: o.room || rooms.find(r => r.id === o.room_id) || (o.room_number ? { number: o.room_number } as any : undefined),
+      guest: o.guest || guests.find(g => g.id === o.guest_id),
     })),
   getById: (id: string): Order | undefined => orders.find(o => o.id === id),
   getActive: (hotelId: string): Order[] =>
-    orders.filter(o => o.hotel_id === hotelId && !['DELIVERED', 'CANCELLED'].includes(o.status)),
-  create: (data: Omit<Order, 'id' | 'created_at' | 'updated_at' | 'items'> & { items: Omit<OrderItem, 'id' | 'order_id'>[] }): Order => {
-    const orderId = uuid();
-    const room = rooms.find(r => r.id === data.room_id);
-    const guest = guests.find(g => g.id === data.guest_id);
-    const order: Order = {
-      ...data,
-      id: orderId,
-      created_at: now(),
-      updated_at: now(),
-      room,
-      guest,
-      items: data.items.map(item => ({ ...item, id: uuid(), order_id: orderId })),
-    };
-    orders.unshift(order);
+    orders.filter(o => o.hotel_id === hotelId && !['DELIVERED', 'CANCELLED', 'completed'].includes(o.status)),
+  createLocal: (order: Order) => {
+    if (!order.room && order.room_id) {
+      order.room = rooms.find(r => r.id === order.room_id);
+    }
+    if (!order.guest && order.guest_id) {
+      order.guest = guests.find(g => g.id === order.guest_id);
+    }
+    const existingIdx = orders.findIndex(o => o.id === order.id);
+    if (existingIdx !== -1) {
+      orders[existingIdx] = order;
+    } else {
+      orders.unshift(order);
+    }
     saveDemoStore();
-
-    // Auto-attach to active Room Folio if charge_to_room !== false
-    if (data.charge_to_room !== false && (data.room_id || data.reservation_id)) {
-      folioService.attachOrderToRoomFolio(order);
-    }
-
-    // Create Notification for Desk & KDS
-    const notif: Notification = {
-      id: uuid(),
-      hotel_id: data.hotel_id,
-      type: 'ORDER',
-      title: `New In-Room Order: Room ${room?.number || 'Portal'}`,
-      message: `${order.items.map(i => `${i.quantity}x ${i.name}`).join(', ')} (Total: ₹${order.total})`,
-      is_read: false,
-      link: '/kds',
-      created_at: now(),
-    };
-    notifications.unshift(notif);
-
-    // Create Activity Log
-    activityLogs.unshift({
-      id: uuid(),
-      hotel_id: data.hotel_id,
-      actor_name: guest ? `${guest.first_name} ${guest.last_name}` : 'Guest QR Portal',
-      action: 'ORDER_PLACED',
-      entity_type: 'ORDER',
-      entity_id: order.id,
-      metadata: { total: order.total, room: room?.number, items_count: order.items.length },
-      created_at: now(),
-    });
-
-    // Write to Supabase in production mode
-    if (!isDemoMode() && supabase) {
-      supabaseOrderService.create(data).catch(err => console.error('Supabase order write error:', err));
-    }
-
-    // Broadcast Realtime Event
-    realtimeSync.emit('NEW_ORDER', { order });
-    realtimeSync.emit('NEW_NOTIFICATION', { notification: notif });
-
-    return order;
   },
-  updateStatus: (id: string, status: Order['status']): Order | undefined => {
+  updateLocal: (id: string, status: Order['status'], timeFields: Partial<Order>) => {
     const idx = orders.findIndex(o => o.id === id);
     if (idx === -1) return undefined;
-    const timeFields: Partial<Order> = {};
-    if (status === 'ACCEPTED') timeFields.accepted_at = now();
-    if (status === 'PREPARING') timeFields.preparing_at = now();
-    if (status === 'READY') timeFields.ready_at = now();
-    if (status === 'DELIVERED') timeFields.delivered_at = now();
     orders[idx] = { ...orders[idx], status, ...timeFields, updated_at: now() };
-    const updated = orders[idx];
     saveDemoStore();
-
-    // When order is delivered or ready, guarantee folio charge attachment
-    if ((status === 'DELIVERED' || status === 'READY') && updated.charge_to_room !== false) {
-      folioService.attachOrderToRoomFolio(updated);
-    }
-
-    // Write to Supabase in production mode
-    if (!isDemoMode() && supabase) {
-      supabaseOrderService.updateStatus(id, status).catch(err => console.error('Supabase order update error:', err));
-    }
-
-    // Broadcast Realtime Event
-    realtimeSync.emit('ORDER_STATUS_CHANGED', { orderId: id, status, order: updated });
-    return updated;
+    return orders[idx];
   },
-  placeOrder: async (data: Omit<Order, 'id' | 'created_at' | 'updated_at' | 'items'> & { items: Omit<OrderItem, 'id' | 'order_id'>[] }): Promise<{ success: boolean; order: Order; error?: string }> => {
-    try {
-      if (!data.hotel_id) throw new Error('Missing hotel identifier.');
-      if (!data.items || data.items.length === 0) throw new Error('Order must contain at least 1 menu item.');
-      const order = orderService.create(data);
-      return { success: true, order };
-    } catch (err: any) {
-      console.error('[orderService.placeOrder] Failed:', err);
-      return { success: false, order: null as any, error: err?.message || 'Failed to dispatch order.' };
-    }
+  attachToFolio: (order: Order) => {
+    folioService.attachOrderToRoomFolio(order);
   },
-};
+  addNotification: (notif: Notification) => {
+    notifications.unshift(notif);
+    saveDemoStore();
+  },
+  addActivityLog: (log: any) => {
+    activityLogs.unshift(log);
+    saveDemoStore();
+  },
+});
+
+export { orderService };
 
 // ─── Housekeeping / Maintenance ───────────────────────────────────────────────
 

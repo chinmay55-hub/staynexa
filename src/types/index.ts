@@ -273,15 +273,18 @@ export interface Order {
   hotel_id: string;
   reservation_id?: string;
   room_id?: string;
+  room_number?: string;
   room?: Room;
   guest_id?: string;
   guest?: Guest;
   status: OrderStatus;
+  payment_status?: string;
   type: 'DINE_IN' | 'ROOM_SERVICE' | 'TAKEAWAY';
   items: OrderItem[];
   subtotal: number;
   tax_amount: number;
   total: number;
+  total_amount?: number;
   special_instructions?: string;
   charge_to_room: boolean;
   created_at: string;

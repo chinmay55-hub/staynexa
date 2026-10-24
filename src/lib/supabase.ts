@@ -6,7 +6,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 // Environment variables
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const appMode = import.meta.env.VITE_APP_MODE || 'demo';
+const appMode = import.meta.env.VITE_APP_MODE;
 
 // Validate that service role key is NEVER exposed on client
 const serviceRoleKeys = ['SUPABASE_SERVICE_ROLE_KEY', 'VITE_SUPABASE_SERVICE_ROLE_KEY', 'SERVICE_ROLE_KEY'];
@@ -31,7 +31,16 @@ export function isSupabaseConfigured(): boolean {
  * Determines whether the app is currently running in Demo Mode
  */
 export function isDemoMode(): boolean {
-  return appMode === 'demo' || !isSupabaseConfigured();
+  // In demo mode if credentials missing OR explicitly set to 'demo'
+  if (!isSupabaseConfigured()) return true;
+  return appMode === 'demo';
+}
+
+/**
+ * Helper to obtain the Supabase client instance
+ */
+export function getSupabaseClient(): SupabaseClient | null {
+  return supabase;
 }
 
 /**

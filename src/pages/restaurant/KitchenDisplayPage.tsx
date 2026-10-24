@@ -20,7 +20,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { orderService, hotelService, reloadDemoStoreFromStorage } from '../../services/demoDataService';
 import { audioService } from '../../services/audioService';
 import { realtimeSync } from '../../services/realtimeSync';
-import { isDemoMode, supabase } from '../../lib/supabase';
+import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 import type { Order, OrderStatus } from '../../types';
 import { Button } from '../../components/ui';
 
@@ -64,10 +64,127 @@ export default function KitchenDisplayPage() {
     setOrders([...orderService.getAll(hotelId)]);
   };
 
-  // 1. Primary WebSocket Realtime Listener (Supabase Postgres Changes & BroadcastChannel)
+  // Direct database fetch helper
+  const fetchDirectKdsOrders = async (): Promise<Order[]> => {
+    reloadDemoStoreFromStorage();
+    let baseOrders = orderService.getAll(hotelId);
+
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        // Direct query to Supabase orders table: status != 'completed'
+        const { data: dbOrders, error: dbErr } = await supabase
+          .from('orders')
+          .select('*, items:order_items(*), room:rooms(*), guest:guests(*)')
+          .eq('hotel_id', hotelId)
+          .neq('status', 'completed')
+          .order('created_at', { ascending: false });
+
+        if (!dbErr && dbOrders && dbOrders.length > 0) {
+          return dbOrders.map(o => ({
+            ...o,
+            status: (o.status || 'PENDING').toUpperCase() as OrderStatus,
+            items: (o.items && Array.isArray(o.items) && o.items.length > 0) ? o.items : [],
+            room: o.room || (o.room_number ? { number: o.room_number } : undefined),
+          }));
+        }
+
+        // Direct fallback query: supabase.from('orders').select('*')
+        const { data: simpleDbOrders, error: simpleErr } = await supabase
+          .from('orders')
+          .select('*')
+          .eq('hotel_id', hotelId)
+          .neq('status', 'completed')
+          .order('created_at', { ascending: false });
+
+        if (!simpleErr && simpleDbOrders && simpleDbOrders.length > 0) {
+          return simpleDbOrders.map(o => ({
+            ...o,
+            status: (o.status || 'PENDING').toUpperCase() as OrderStatus,
+            items: (o.items && Array.isArray(o.items)) ? o.items : [],
+            room: o.room_number ? { number: o.room_number } : undefined,
+          }));
+        }
+      } catch (e) {
+        console.warn('[KDS] Direct fetch error:', e);
+      }
+    }
+
+    return baseOrders;
+  };
+
+  // 1. Direct KDS Database Query on Mount (status != 'completed')
+  useEffect(() => {
+    let isMounted = true;
+    fetchDirectKdsOrders().then(fresh => {
+      if (isMounted && fresh && fresh.length > 0) {
+        setOrders(fresh);
+      }
+    });
+    return () => { isMounted = false; };
+  }, [hotelId]);
+
+  // 2. Realtime WebSocket Listeners (Supabase Postgres Changes on schema: 'public', table: 'orders')
   useEffect(() => {
     const disconnectSupabase = realtimeSync.connectSupabaseHotelChannel(hotelId);
 
+    // Direct Postgres Realtime Subscription for public.orders
+    let ordersSubscription: any = null;
+    if (isSupabaseConfigured() && supabase) {
+      ordersSubscription = supabase
+        .channel(`kds-public-orders-${hotelId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'orders',
+          },
+          (payload) => {
+            console.log('[KDS Realtime postgres_changes]', payload.eventType, payload.new);
+            if (payload.eventType === 'INSERT' && payload.new) {
+              const raw = payload.new as any;
+              if (raw.hotel_id === hotelId) {
+                const newOrder: Order = {
+                  ...raw,
+                  status: (raw.status || 'PENDING').toUpperCase() as OrderStatus,
+                  items: Array.isArray(raw.items) ? raw.items : [],
+                  room: raw.room_number ? { number: raw.room_number } as any : undefined,
+                };
+                setOrders(prev => {
+                  if (prev.some(o => o.id === newOrder.id)) return prev;
+                  return [newOrder, ...prev];
+                });
+                audioService.playChime();
+                const roomNum = raw.room_number || raw.room_id || 'Portal';
+                setLiveAlertBanner({
+                  id: newOrder.id,
+                  message: `🔔 New Order #${newOrder.id.slice(-6).toUpperCase()} from Room ${roomNum}`,
+                });
+              }
+            } else if (payload.eventType === 'UPDATE' && payload.new) {
+              const raw = payload.new as any;
+              if (raw.hotel_id === hotelId) {
+                setOrders(prev => prev.map(o => (o.id === raw.id ? { 
+                  ...o, 
+                  ...raw, 
+                  status: (raw.status || o.status).toUpperCase() as OrderStatus,
+                  items: (raw.items && Array.isArray(raw.items) && raw.items.length > 0) ? raw.items : o.items,
+                } : o)));
+              }
+            } else if (payload.eventType === 'DELETE' && payload.old) {
+              const oldId = (payload.old as any).id;
+              setOrders(prev => prev.filter(o => o.id !== oldId));
+            }
+          }
+        )
+        .subscribe((status) => {
+          if (status === 'SUBSCRIBED') {
+            setIsRealtimeConnected(true);
+          }
+        });
+    }
+
+    // Local / In-process BroadcastChannel Subscription
     const unsubNewOrder = realtimeSync.subscribe('NEW_ORDER', ({ order }) => {
       if (order.hotel_id === hotelId) {
         setOrders(prev => {
@@ -75,63 +192,36 @@ export default function KitchenDisplayPage() {
           return [order, ...prev];
         });
         audioService.playChime();
-        const roomNum = order.room?.number || order.room_id || 'Guest Portal';
+        const roomNum = (order as any).room_number || order.room?.number || order.room_id || 'Guest Portal';
         const itemCount = (order.items || []).length;
         setLiveAlertBanner({
           id: order.id,
-          message: `🔔 New Order #${order.id.slice(0, 8)} from Room ${roomNum} (${itemCount} item${itemCount > 1 ? 's' : ''})`,
+          message: `🔔 New Order #${order.id.slice(-6).toUpperCase()} from Room ${roomNum} (${itemCount} item${itemCount > 1 ? 's' : ''})`,
         });
       }
     });
 
     const unsubOrderStatus = realtimeSync.subscribe('ORDER_STATUS_CHANGED', ({ orderId, status, order }) => {
       setOrders(prev =>
-        prev.map(o => (o.id === orderId ? { ...o, ...order, status } : o))
+        prev.map(o => (o.id === orderId ? { ...o, ...order, status: status.toUpperCase() as OrderStatus } : o))
       );
     });
 
     return () => {
       disconnectSupabase();
+      if (ordersSubscription && supabase) {
+        supabase.removeChannel(ordersSubscription);
+      }
       unsubNewOrder();
       unsubOrderStatus();
     };
   }, [hotelId]);
 
-  // 2. Infallible Direct Database Polling (3-Second Interval Fallback)
+  // 3. Infallible Background Interval: Strict 3-Second Database Auto-Polling
   useEffect(() => {
     const pollInterval = setInterval(async () => {
       try {
-        reloadDemoStoreFromStorage();
-        let freshOrders = orderService.getAll(hotelId);
-
-        // Direct query to Supabase PostgreSQL table
-        if (!isDemoMode() && supabase) {
-          try {
-            const { data: dbOrders, error: dbErr } = await supabase
-              .from('orders')
-              .select('*, items:order_items(*), room:rooms(*), guest:guests(*)')
-              .eq('hotel_id', hotelId)
-              .order('created_at', { ascending: false });
-
-            if (!dbErr && dbOrders && dbOrders.length > 0) {
-              freshOrders = dbOrders;
-            } else {
-              const { data: simpleDbOrders } = await supabase
-                .from('orders')
-                .select('*')
-                .eq('hotel_id', hotelId)
-                .order('created_at', { ascending: false });
-              if (simpleDbOrders && simpleDbOrders.length > 0) {
-                freshOrders = simpleDbOrders.map(o => ({
-                  ...o,
-                  items: o.items || [],
-                }));
-              }
-            }
-          } catch (e) {
-            // gracefully fallback to local store
-          }
-        }
+        const freshOrders = await fetchDirectKdsOrders();
 
         // Compare and alert on new PENDING orders
         setOrders(prevOrders => {
@@ -141,7 +231,8 @@ export default function KitchenDisplayPage() {
 
           freshOrders.forEach(fo => {
             const existing = prevMap.get(fo.id);
-            if (!existing && fo.status === 'PENDING') {
+            const isPending = (fo.status || '').toUpperCase() === 'PENDING';
+            if (!existing && isPending) {
               foundNewPending = true;
               newestPendingOrder = fo;
             }
@@ -149,7 +240,7 @@ export default function KitchenDisplayPage() {
 
           if (foundNewPending && newestPendingOrder) {
             audioService.playChime();
-            const roomNum = (newestPendingOrder as Order).room?.number || (newestPendingOrder as Order).room_id || 'Portal';
+            const roomNum = (newestPendingOrder as any).room_number || (newestPendingOrder as Order).room?.number || (newestPendingOrder as Order).room_id || 'Portal';
             setLiveAlertBanner({
               id: (newestPendingOrder as Order).id,
               message: `🔔 New Order #${(newestPendingOrder as Order).id.slice(-6).toUpperCase()} from Room ${roomNum}`,
@@ -177,7 +268,7 @@ export default function KitchenDisplayPage() {
 
   const handleAdvanceStatus = (orderId: string, nextStatus: OrderStatus) => {
     orderService.updateStatus(orderId, nextStatus);
-    refreshOrders();
+    setOrders(prev => prev.map(o => (o.id === orderId ? { ...o, status: nextStatus } : o)));
   };
 
   // Filter active orders into 4 pipeline columns

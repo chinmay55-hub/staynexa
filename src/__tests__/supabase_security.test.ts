@@ -235,5 +235,12 @@ describe('STAYNEXA SECURITY & SUPABASE INTEGRATION AUDIT SUITE', () => {
       expect(realtimeSql).toContain('CREATE POLICY orders_select_policy ON orders');
       expect(realtimeSql).toContain("auth.role() = 'anon'");
     });
+
+    it('should include direct persistence schema columns on orders table', () => {
+      expect(realtimeSql).toContain('ALTER TABLE orders ADD COLUMN IF NOT EXISTS room_number VARCHAR(50);');
+      expect(realtimeSql).toContain("ALTER TABLE orders ADD COLUMN IF NOT EXISTS items JSONB DEFAULT '[]'::jsonb;");
+      expect(realtimeSql).toContain('ALTER TABLE orders ADD COLUMN IF NOT EXISTS total_amount NUMERIC(12,2);');
+      expect(realtimeSql).toContain("ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_status VARCHAR(50) DEFAULT 'unpaid';");
+    });
   });
 });

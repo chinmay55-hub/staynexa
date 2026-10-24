@@ -34,6 +34,7 @@ import {
   serviceRequestService, 
   folioService 
 } from '../../services/demoDataService';
+import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { realtimeSync } from '../../services/realtimeSync';
 import { paymentService } from '../../services/paymentService';
 import type { 
@@ -121,7 +122,37 @@ export default function GuestPortalPage() {
     const allHotels = hotelService.getAll();
     let resolvedHotel: Hotel | undefined = hotelService.getById('hotel-001') || allHotels[0];
     let resolvedRoom: Room | null = null;
-    let isFallbackSession = false;
+
+    // Direct Supabase query to fetch real room state when Supabase is configured
+    if (token && isSupabaseConfigured() && supabase) {
+      (async () => {
+        try {
+          const { data: qr } = await supabase
+            .from('qr_codes')
+            .select('*, room:rooms(*), hotel:hotels(*)')
+            .eq('token', token)
+            .maybeSingle();
+
+          if (qr && qr.room) {
+            setRoom(qr.room);
+            if (qr.hotel) setHotel(qr.hotel);
+          } else {
+            const { data: dbRooms } = await supabase
+              .from('rooms')
+              .select('*, hotel:hotels(*)')
+              .or(`number.eq.${token},id.eq.${token}`)
+              .limit(1);
+
+            if (dbRooms && dbRooms.length > 0) {
+              setRoom(dbRooms[0]);
+              if (dbRooms[0].hotel) setHotel(dbRooms[0].hotel);
+            }
+          }
+        } catch (dbErr) {
+          console.warn('[GuestPortal] Supabase direct room fetch:', dbErr);
+        }
+      })();
+    }
 
     // 2. Resilient token & room resolution
     if (token) {
@@ -179,7 +210,6 @@ export default function GuestPortalPage() {
         hotelRooms.find(r => r.status === 'AVAILABLE' && r.housekeeping_status === 'CLEAN') || 
         hotelRooms[0] || 
         null;
-      isFallbackSession = true;
     }
 
     if (!resolvedHotel || !resolvedRoom) {
@@ -191,11 +221,8 @@ export default function GuestPortalPage() {
     setHotel(resolvedHotel);
     setRoom(resolvedRoom);
 
-    if (isFallbackSession) {
-      setDemoNotice(`Demo Guest Session Loaded · Connected to Room ${resolvedRoom.number}`);
-    } else {
-      setDemoNotice(null);
-    }
+    // Connected to valid room: remove demo notice banner
+    setDemoNotice(null);
 
     // 4. Resolve active reservation, guest, folio
     const allRes = reservationService.getAll(resolvedHotel.id);
@@ -313,6 +340,7 @@ export default function GuestPortalPage() {
       const res = await orderService.placeOrder({
         hotel_id: hotel.id,
         room_id: room?.id,
+        room_number: room?.number,
         guest_id: guest?.id,
         reservation_id: reservation?.id,
         status: 'PENDING',
