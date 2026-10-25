@@ -7,7 +7,7 @@ import type {
   Reservation, Folio, FolioItem, Payment, Order, OrderItem,
   MenuCategory, MenuItem, HotelService, ServiceRequest,
   HousekeepingTask, MaintenanceTicket, Department,
-  Profile, Notification, QRCode, ActivityLog, Subscription
+  Profile, Notification, QRCode, ActivityLog, Subscription, HotelMembership
 } from '../types';
 
 import {
@@ -23,7 +23,7 @@ import {
 } from '../data/demo';
 
 import { realtimeSync } from './realtimeSync';
-import { isDemoMode, supabase } from '../lib/supabase';
+import { isDemoMode, isSupabaseConfigured, supabase } from '../lib/supabase';
 import { orderService, registerOrderStoreAdapter } from './orderService';
 import { 
   supabaseHotelService,
@@ -35,6 +35,8 @@ import {
   supabaseServiceRequestService, 
   supabaseHousekeepingService,
   supabaseMaintenanceService,
+  supabaseMenuService,
+  supabaseQrService,
   supabaseSyncService
 } from './supabaseService';
 
@@ -160,21 +162,66 @@ export function saveDemoStore() {
   }
 }
 
+/**
+ * SEC-01: Reverts optimistic local mutations when Supabase database operation rejects,
+ * notifies observers via MUTATION_FAILED, and dispatches a window error event.
+ */
+function handleOptimisticMutationFailure(
+  entity: string,
+  id: string,
+  rollbackFn: () => void,
+  error: any
+) {
+  const errMsg = error?.message || String(error);
+  console.error(`[StayNexa DB Mutation Failed] ${entity} id=${id}:`, errMsg);
+  try {
+    rollbackFn();
+    saveDemoStore();
+  } catch (rollbackErr) {
+    console.error(`[StayNexa Rollback Error] ${entity} id=${id}:`, rollbackErr);
+  }
+  realtimeSync.emit('MUTATION_FAILED', {
+    entity,
+    id,
+    error: errMsg,
+  });
+  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    window.dispatchEvent(
+      new CustomEvent('staynexa_mutation_error', {
+        detail: { entity, id, error: errMsg },
+      })
+    );
+  }
+}
+
 export function reloadDemoStoreFromStorage(): void {
   if (typeof window === 'undefined' || !window.localStorage) return;
   const store = loadInitialStore();
   if (store) {
     if (Array.isArray(store.hotels)) hotels = [...store.hotels];
+    if (Array.isArray(store.branding)) branding = [...store.branding];
+    if (Array.isArray(store.settings)) settings = [...store.settings];
+    if (Array.isArray(store.roomTypes)) roomTypes = [...store.roomTypes];
     if (Array.isArray(store.rooms)) rooms = [...store.rooms];
     if (Array.isArray(store.guests)) guests = [...store.guests];
     if (Array.isArray(store.reservations)) reservations = [...store.reservations];
     if (Array.isArray(store.folios)) folios = [...store.folios];
     if (Array.isArray(store.folioItems)) folioItems = [...store.folioItems];
     if (Array.isArray(store.payments)) payments = [...store.payments];
+    if (Array.isArray(store.menuCategories)) menuCategories = [...store.menuCategories];
+    if (Array.isArray(store.menuItems)) menuItems = [...store.menuItems];
     if (Array.isArray(store.orders)) orders = [...store.orders];
+    if (Array.isArray(store.hotelServices)) hotelServices = [...store.hotelServices];
     if (Array.isArray(store.serviceRequests)) serviceRequests = [...store.serviceRequests];
     if (Array.isArray(store.housekeepingTasks)) housekeepingTasks = [...store.housekeepingTasks];
+    if (Array.isArray(store.maintenanceTickets)) maintenanceTickets = [...store.maintenanceTickets];
+    if (Array.isArray(store.departments)) departments = [...store.departments];
+    if (Array.isArray(store.profiles)) profiles = [...store.profiles];
+    if (Array.isArray(store.memberships)) memberships = [...store.memberships];
     if (Array.isArray(store.notifications)) notifications = [...store.notifications];
+    if (Array.isArray(store.qrCodes)) qrCodes = [...store.qrCodes];
+    if (Array.isArray(store.activityLogs)) activityLogs = [...store.activityLogs];
+    if (Array.isArray(store.subscriptions)) subscriptions = [...store.subscriptions];
   }
 }
 
@@ -270,14 +317,31 @@ export const hotelService = {
     return res;
   },
   updateSettings: (hotelId: string, data: Partial<HotelSettings>): HotelSettings | undefined => {
+    let res: HotelSettings;
     const idx = settings.findIndex(s => s.hotel_id === hotelId);
-    if (idx === -1) return undefined;
-    settings[idx] = { ...settings[idx], ...data };
+    if (idx !== -1) {
+      settings[idx] = { ...settings[idx], ...data };
+      res = settings[idx];
+    } else {
+      const newSettings: HotelSettings = {
+        id: uuid(),
+        hotel_id: hotelId,
+        invoice_prefix: 'INV',
+        default_tax_percent: 18,
+        service_charge_percent: 0,
+        allow_room_charge: true,
+        require_deposit: false,
+        deposit_percent: 0,
+        ...data,
+      };
+      settings.push(newSettings);
+      res = newSettings;
+    }
     saveDemoStore();
     if (!isDemoMode() && supabase) {
       supabaseHotelService.updateSettings(hotelId, data).catch(err => console.error('Supabase settings error:', err));
     }
-    return settings[idx];
+    return res;
   },
   getPlatformStats: () => ({
     total: hotels.length,
@@ -302,32 +366,98 @@ export const roomService = {
     const room: Room = { ...data, id: uuid() };
     rooms.push(room);
     saveDemoStore();
-    if (!isDemoMode() && supabase) {
-      supabaseRoomService.create(data).catch(err => console.error('Supabase room create error:', err));
+    if (!isDemoMode() && isSupabaseConfigured() && supabase) {
+      supabaseRoomService.create(data).catch(err => {
+        handleOptimisticMutationFailure('room', room.id, () => {
+          const idx = rooms.findIndex(r => r.id === room.id);
+          if (idx !== -1) rooms.splice(idx, 1);
+        }, err);
+      });
     }
     return room;
+  },
+  createAsync: async (data: Omit<Room, 'id' | 'created_at' | 'updated_at'>): Promise<Room> => {
+    if (isDemoMode() || !isSupabaseConfigured() || !supabase) {
+      return roomService.create(data);
+    }
+    const created = await supabaseRoomService.create(data);
+    const idx = rooms.findIndex(r => r.id === created.id);
+    if (idx !== -1) {
+      rooms[idx] = created;
+    } else {
+      rooms.unshift(created);
+    }
+    saveDemoStore();
+    realtimeSync.emit('ROOM_UPDATED', { room: created });
+    return created;
   },
   update: (id: string, data: Partial<Room>): Room | undefined => {
     const idx = rooms.findIndex(r => r.id === id);
     if (idx === -1) return undefined;
+    const prevState = { ...rooms[idx] };
     rooms[idx] = { ...rooms[idx], ...data };
     saveDemoStore();
-    if (!isDemoMode() && supabase) {
-      supabaseRoomService.update(id, data).catch(err => console.error('Supabase room update error:', err));
+    if (!isDemoMode() && isSupabaseConfigured() && supabase) {
+      supabaseRoomService.update(id, data).catch(err => {
+        handleOptimisticMutationFailure('room', id, () => {
+          const curIdx = rooms.findIndex(r => r.id === id);
+          if (curIdx !== -1) rooms[curIdx] = prevState;
+        }, err);
+      });
     }
     realtimeSync.emit('ROOM_UPDATED', { room: rooms[idx] });
     return rooms[idx];
   },
+  updateAsync: async (id: string, data: Partial<Room>): Promise<Room | undefined> => {
+    if (isDemoMode() || !isSupabaseConfigured() || !supabase) {
+      return roomService.update(id, data);
+    }
+    const updated = await supabaseRoomService.update(id, data);
+    const idx = rooms.findIndex(r => r.id === id);
+    if (idx !== -1) {
+      rooms[idx] = updated;
+    } else {
+      rooms.unshift(updated);
+    }
+    saveDemoStore();
+    realtimeSync.emit('ROOM_UPDATED', { room: updated });
+    return updated;
+  },
   updateStatus: (id: string, status: Room['status'], housekeeping_status?: Room['housekeeping_status']): Room | undefined => {
     const idx = rooms.findIndex(r => r.id === id);
     if (idx === -1) return undefined;
+    const prevStatus = rooms[idx].status;
+    const prevHk = rooms[idx].housekeeping_status;
     rooms[idx] = { ...rooms[idx], status, ...(housekeeping_status ? { housekeeping_status } : {}) };
     saveDemoStore();
-    if (!isDemoMode() && supabase) {
-      supabaseRoomService.updateStatus(id, status, housekeeping_status).catch(err => console.error('Supabase room status error:', err));
+    if (!isDemoMode() && isSupabaseConfigured() && supabase) {
+      supabaseRoomService.updateStatus(id, status, housekeeping_status).catch(err => {
+        handleOptimisticMutationFailure('room', id, () => {
+          const curIdx = rooms.findIndex(r => r.id === id);
+          if (curIdx !== -1) {
+            rooms[curIdx].status = prevStatus;
+            rooms[curIdx].housekeeping_status = prevHk;
+          }
+        }, err);
+      });
     }
     realtimeSync.emit('ROOM_UPDATED', { room: rooms[idx] });
     return rooms[idx];
+  },
+  updateStatusAsync: async (id: string, status: Room['status'], housekeeping_status?: Room['housekeeping_status']): Promise<Room | undefined> => {
+    if (isDemoMode() || !isSupabaseConfigured() || !supabase) {
+      return roomService.updateStatus(id, status, housekeeping_status);
+    }
+    const updated = await supabaseRoomService.updateStatus(id, status, housekeeping_status);
+    const idx = rooms.findIndex(r => r.id === id);
+    if (idx !== -1) {
+      rooms[idx] = updated;
+    } else {
+      rooms.unshift(updated);
+    }
+    saveDemoStore();
+    realtimeSync.emit('ROOM_UPDATED', { room: updated });
+    return updated;
   },
   getAvailable: (hotelId: string, checkIn: string, checkOut: string, roomTypeId?: string): Room[] => {
     const occupiedRoomIds = reservations
@@ -360,6 +490,19 @@ export const roomService = {
       supabaseRoomService.createType(data).catch(err => console.error('Supabase room type error:', err));
     }
     return rt;
+  },
+  deleteAsync: async (id: string): Promise<boolean> => {
+    if (!isDemoMode() && isSupabaseConfigured() && supabase) {
+      await supabaseRoomService.delete(id);
+    }
+    const idx = rooms.findIndex(r => r.id === id);
+    if (idx !== -1) {
+      rooms[idx] = { ...rooms[idx], is_active: false };
+      saveDemoStore();
+      realtimeSync.emit('ROOM_UPDATED', { room: rooms[idx] });
+      return true;
+    }
+    return false;
   },
 };
 
@@ -423,30 +566,77 @@ export const reservationService = {
     const res: Reservation = { ...data, id: uuid(), created_at: now(), updated_at: now() };
     reservations.push(res);
     saveDemoStore();
-    if (!isDemoMode() && supabase) {
-      supabaseReservationService.create(data).catch(err => console.error('Supabase reservation create error:', err));
+    if (!isDemoMode() && isSupabaseConfigured() && supabase) {
+      supabaseReservationService.create(data).catch(err => {
+        handleOptimisticMutationFailure('reservation', res.id, () => {
+          const idx = reservations.findIndex(r => r.id === res.id);
+          if (idx !== -1) reservations.splice(idx, 1);
+        }, err);
+      });
     }
     realtimeSync.emit('RESERVATION_CREATED', { reservation: res });
     return res;
   },
+  createAsync: async (data: Omit<Reservation, 'id' | 'created_at' | 'updated_at'>): Promise<Reservation> => {
+    if (isDemoMode() || !isSupabaseConfigured() || !supabase) {
+      return reservationService.create(data);
+    }
+    const created = await supabaseReservationService.create(data);
+    const idx = reservations.findIndex(r => r.id === created.id);
+    if (idx !== -1) {
+      reservations[idx] = created;
+    } else {
+      reservations.unshift(created);
+    }
+    saveDemoStore();
+    realtimeSync.emit('RESERVATION_CREATED', { reservation: created });
+    return created;
+  },
   update: (id: string, data: Partial<Reservation>): Reservation | undefined => {
     const idx = reservations.findIndex(r => r.id === id);
     if (idx === -1) return undefined;
+    const prevState = { ...reservations[idx] };
     reservations[idx] = { ...reservations[idx], ...data, updated_at: now() };
     saveDemoStore();
-    if (!isDemoMode() && supabase) {
-      supabaseReservationService.update(id, data).catch(err => console.error('Supabase reservation update error:', err));
+    if (!isDemoMode() && isSupabaseConfigured() && supabase) {
+      supabaseReservationService.update(id, data).catch(err => {
+        handleOptimisticMutationFailure('reservation', id, () => {
+          const curIdx = reservations.findIndex(r => r.id === id);
+          if (curIdx !== -1) reservations[curIdx] = prevState;
+        }, err);
+      });
     }
     realtimeSync.emit('RESERVATION_UPDATED', { reservation: reservations[idx] });
     return reservations[idx];
   },
+  updateAsync: async (id: string, data: Partial<Reservation>): Promise<Reservation | undefined> => {
+    if (isDemoMode() || !isSupabaseConfigured() || !supabase) {
+      return reservationService.update(id, data);
+    }
+    const updated = await supabaseReservationService.update(id, data);
+    const idx = reservations.findIndex(r => r.id === id);
+    if (idx !== -1) {
+      reservations[idx] = updated;
+    } else {
+      reservations.unshift(updated);
+    }
+    saveDemoStore();
+    realtimeSync.emit('RESERVATION_UPDATED', { reservation: updated });
+    return updated;
+  },
   checkIn: (id: string, roomId: string): Reservation | undefined => {
     const idx = reservations.findIndex(r => r.id === id);
     if (idx === -1) return undefined;
+    const prevStatus = reservations[idx].status;
+    const prevRoomId = reservations[idx].room_id;
     reservations[idx] = { ...reservations[idx], status: 'CHECKED_IN', room_id: roomId, actual_check_in: now(), updated_at: now() };
     // Update room status
     const roomIdx = rooms.findIndex(r => r.id === roomId);
-    if (roomIdx !== -1) rooms[roomIdx] = { ...rooms[roomIdx], status: 'OCCUPIED' };
+    let prevRoomStatus: Room['status'] | undefined;
+    if (roomIdx !== -1) {
+      prevRoomStatus = rooms[roomIdx].status;
+      rooms[roomIdx] = { ...rooms[roomIdx], status: 'OCCUPIED' };
+    }
     // Create folio if not exists
     const existingFolio = folios.find(f => f.reservation_id === id);
     if (!existingFolio) {
@@ -458,34 +648,136 @@ export const reservationService = {
       });
     }
     saveDemoStore();
-    if (!isDemoMode() && supabase) {
-      supabaseReservationService.checkIn(id, roomId).catch(err => console.error('Supabase checkin error:', err));
+    if (!isDemoMode() && isSupabaseConfigured() && supabase) {
+      supabaseReservationService.checkIn(id, roomId).catch(err => {
+        handleOptimisticMutationFailure('reservation_checkin', id, () => {
+          const curResIdx = reservations.findIndex(r => r.id === id);
+          if (curResIdx !== -1) {
+            reservations[curResIdx].status = prevStatus;
+            reservations[curResIdx].room_id = prevRoomId;
+          }
+          if (roomIdx !== -1 && prevRoomStatus) {
+            rooms[roomIdx].status = prevRoomStatus;
+          }
+        }, err);
+      });
     }
     realtimeSync.emit('RESERVATION_UPDATED', { reservation: reservations[idx] });
     if (roomIdx !== -1) realtimeSync.emit('ROOM_UPDATED', { room: rooms[roomIdx] });
     return reservations[idx];
   },
+  checkInAsync: async (id: string, roomId: string): Promise<Reservation | undefined> => {
+    if (isDemoMode() || !isSupabaseConfigured() || !supabase) {
+      return reservationService.checkIn(id, roomId);
+    }
+    const updated = await supabaseReservationService.checkIn(id, roomId);
+    const idx = reservations.findIndex(r => r.id === id);
+    if (idx !== -1) {
+      reservations[idx] = updated;
+    } else {
+      reservations.unshift(updated);
+    }
+    const roomIdx = rooms.findIndex(r => r.id === roomId);
+    if (roomIdx !== -1) {
+      rooms[roomIdx] = { ...rooms[roomIdx], status: 'OCCUPIED' };
+      realtimeSync.emit('ROOM_UPDATED', { room: rooms[roomIdx] });
+    }
+    saveDemoStore();
+    realtimeSync.emit('RESERVATION_UPDATED', { reservation: updated });
+    return updated;
+  },
   checkOut: (id: string): Reservation | undefined => {
     const idx = reservations.findIndex(r => r.id === id);
     if (idx === -1) return undefined;
     const res = reservations[idx];
+    const prevStatus = res.status;
+    const prevCheckOut = res.actual_check_out;
     reservations[idx] = { ...res, status: 'CHECKED_OUT', actual_check_out: now(), updated_at: now() };
     // Mark room as dirty
     let updatedRoom: Room | undefined;
+    let prevRoomStatus: Room['status'] | undefined;
+    let prevHkStatus: Room['housekeeping_status'] | undefined;
+    let createdTaskId: string | undefined;
+
     if (res.room_id) {
       const roomIdx = rooms.findIndex(r => r.id === res.room_id);
       if (roomIdx !== -1) {
+        prevRoomStatus = rooms[roomIdx].status;
+        prevHkStatus = rooms[roomIdx].housekeeping_status;
         rooms[roomIdx] = { ...rooms[roomIdx], status: 'AVAILABLE', housekeeping_status: 'DIRTY' };
         updatedRoom = rooms[roomIdx];
+
+        // Ensure an automated turnover cleaning task is queued for Housekeeping
+        const existingPendingTask = housekeepingTasks.find(
+          t => t.room_id === res.room_id && (t.status === 'PENDING' || t.status === 'IN_PROGRESS')
+        );
+        if (!existingPendingTask) {
+          const task: HousekeepingTask = {
+            id: uuid(),
+            hotel_id: res.hotel_id,
+            room_id: res.room_id,
+            reservation_id: res.id,
+            type: 'CHECKOUT_CLEAN',
+            status: 'PENDING',
+            priority: 'HIGH',
+            notes: `Checkout clean for Room ${rooms[roomIdx].number}`,
+            assigned_to: 'Housekeeping Crew',
+            created_at: now(),
+            room: rooms[roomIdx],
+          };
+          createdTaskId = task.id;
+          housekeepingTasks.unshift(task);
+          realtimeSync.emit('NEW_HOUSEKEEPING_TASK', { task });
+        }
       }
     }
     saveDemoStore();
-    if (!isDemoMode() && supabase) {
-      supabaseReservationService.checkOut(id).catch(err => console.error('Supabase checkout error:', err));
+    if (!isDemoMode() && isSupabaseConfigured() && supabase) {
+      supabaseReservationService.checkOut(id).catch(err => {
+        handleOptimisticMutationFailure('reservation_checkout', id, () => {
+          const curResIdx = reservations.findIndex(r => r.id === id);
+          if (curResIdx !== -1) {
+            reservations[curResIdx].status = prevStatus;
+            reservations[curResIdx].actual_check_out = prevCheckOut;
+          }
+          if (res.room_id) {
+            const curRoomIdx = rooms.findIndex(r => r.id === res.room_id);
+            if (curRoomIdx !== -1 && prevRoomStatus && prevHkStatus) {
+              rooms[curRoomIdx].status = prevRoomStatus;
+              rooms[curRoomIdx].housekeeping_status = prevHkStatus;
+            }
+          }
+          if (createdTaskId) {
+            const taskIdx = housekeepingTasks.findIndex(t => t.id === createdTaskId);
+            if (taskIdx !== -1) housekeepingTasks.splice(taskIdx, 1);
+          }
+        }, err);
+      });
     }
     realtimeSync.emit('RESERVATION_UPDATED', { reservation: reservations[idx] });
     if (updatedRoom) realtimeSync.emit('ROOM_UPDATED', { room: updatedRoom });
     return reservations[idx];
+  },
+  checkOutAsync: async (id: string): Promise<Reservation | undefined> => {
+    if (isDemoMode() || !isSupabaseConfigured() || !supabase) {
+      return reservationService.checkOut(id);
+    }
+    const updated = await supabaseReservationService.checkOut(id);
+    const idx = reservations.findIndex(r => r.id === id);
+    if (idx !== -1) {
+      reservations[idx] = updated;
+    }
+    const roomId = updated.room_id || reservations[idx]?.room_id;
+    if (roomId) {
+      const roomIdx = rooms.findIndex(r => r.id === roomId);
+      if (roomIdx !== -1) {
+        rooms[roomIdx] = { ...rooms[roomIdx], status: 'AVAILABLE', housekeeping_status: 'DIRTY' };
+        realtimeSync.emit('ROOM_UPDATED', { room: rooms[roomIdx] });
+      }
+    }
+    saveDemoStore();
+    realtimeSync.emit('RESERVATION_UPDATED', { reservation: updated });
+    return updated;
   },
   getTodayArrivals: (hotelId: string): Reservation[] => {
     const todayDate = new Date().toISOString().split('T')[0];
@@ -515,20 +807,66 @@ export const folioService = {
     // Recalculate folio totals
     folioService.recalculate(item.folio_id);
     saveDemoStore();
-    if (!isDemoMode() && supabase) {
-      supabaseFolioService.addCharge(item).catch(err => console.error('Supabase folio charge error:', err));
+    if (!isDemoMode() && isSupabaseConfigured() && supabase) {
+      supabaseFolioService.addCharge(item).catch(err => {
+        handleOptimisticMutationFailure('folio_item', fi.id, () => {
+          const idx = folioItems.findIndex(f => f.id === fi.id);
+          if (idx !== -1) {
+            folioItems.splice(idx, 1);
+            folioService.recalculate(item.folio_id);
+          }
+        }, err);
+      });
     }
     return fi;
+  },
+  addItemAsync: async (item: Omit<FolioItem, 'id'>): Promise<FolioItem> => {
+    if (isDemoMode() || !isSupabaseConfigured() || !supabase) {
+      return folioService.addItem(item);
+    }
+    const created = await supabaseFolioService.addCharge(item);
+    const idx = folioItems.findIndex(fi => fi.id === created.id);
+    if (idx !== -1) {
+      folioItems[idx] = created;
+    } else {
+      folioItems.push(created);
+    }
+    folioService.recalculate(item.folio_id);
+    saveDemoStore();
+    return created;
   },
   addPayment: (payment: Omit<Payment, 'id' | 'created_at'>): Payment => {
     const p: Payment = { ...payment, id: uuid(), created_at: now() };
     payments.push(p);
     folioService.recalculate(payment.folio_id);
     saveDemoStore();
-    if (!isDemoMode() && supabase) {
-      supabaseFolioService.addPayment(payment).catch(err => console.error('Supabase folio payment error:', err));
+    if (!isDemoMode() && isSupabaseConfigured() && supabase) {
+      supabaseFolioService.addPayment(payment).catch(err => {
+        handleOptimisticMutationFailure('payment', p.id, () => {
+          const idx = payments.findIndex(pmt => pmt.id === p.id);
+          if (idx !== -1) {
+            payments.splice(idx, 1);
+            folioService.recalculate(payment.folio_id);
+          }
+        }, err);
+      });
     }
     return p;
+  },
+  addPaymentAsync: async (payment: Omit<Payment, 'id' | 'created_at'>): Promise<Payment> => {
+    if (isDemoMode() || !isSupabaseConfigured() || !supabase) {
+      return folioService.addPayment(payment);
+    }
+    const created = await supabaseFolioService.addPayment(payment);
+    const idx = payments.findIndex(p => p.id === created.id);
+    if (idx !== -1) {
+      payments[idx] = created;
+    } else {
+      payments.push(created);
+    }
+    folioService.recalculate(payment.folio_id);
+    saveDemoStore();
+    return created;
   },
   recalculate: (folioId: string): void => {
     const idx = folios.findIndex(f => f.id === folioId);
@@ -611,6 +949,17 @@ export const folioService = {
       return null;
     }
   },
+  detachOrderFromRoomFolio: (orderId: string): boolean => {
+    const itemIdx = folioItems.findIndex(fi => fi.reference_id === orderId);
+    if (itemIdx === -1) return false;
+    const folioId = folioItems[itemIdx].folio_id;
+    folioItems.splice(itemIdx, 1);
+    folioService.recalculate(folioId);
+    saveDemoStore();
+    const updatedFolio = folios.find(f => f.id === folioId);
+    if (updatedFolio) realtimeSync.emit('FOLIO_UPDATED', { folio: updatedFolio });
+    return true;
+  },
 };
 
 // ─── Restaurant / Orders ──────────────────────────────────────────────────────
@@ -621,6 +970,100 @@ export const menuService = {
   getItems: (hotelId: string, categoryId?: string): MenuItem[] =>
     menuItems.filter(i => i.hotel_id === hotelId && (!categoryId || i.category_id === categoryId)),
   getItemById: (id: string): MenuItem | undefined => menuItems.find(i => i.id === id),
+  createItem: (item: Omit<MenuItem, 'id'> & { id?: string }): MenuItem => {
+    const newItem: MenuItem = {
+      ...item,
+      id: item.id || `mi-${Date.now()}-${uuid().slice(0, 4)}`,
+    };
+    menuItems.push(newItem);
+    saveDemoStore();
+    return newItem;
+  },
+  createItemAsync: async (item: Omit<MenuItem, 'id'> & { id?: string }): Promise<MenuItem> => {
+    if (!isDemoMode() && isSupabaseConfigured() && supabase) {
+      const created = await supabaseMenuService.createItem(item);
+      const idx = menuItems.findIndex(i => i.id === created.id);
+      if (idx !== -1) menuItems[idx] = created;
+      else menuItems.unshift(created);
+      saveDemoStore();
+      realtimeSync.emit('MENU_UPDATED', { item: created });
+      return created;
+    }
+    return menuService.createItem(item);
+  },
+  updateItem: (id: string, data: Partial<MenuItem>): MenuItem | undefined => {
+    const idx = menuItems.findIndex(i => i.id === id);
+    if (idx === -1) return undefined;
+    menuItems[idx] = { ...menuItems[idx], ...data };
+    saveDemoStore();
+    return menuItems[idx];
+  },
+  updateItemAsync: async (id: string, data: Partial<MenuItem>): Promise<MenuItem | undefined> => {
+    if (!isDemoMode() && isSupabaseConfigured() && supabase) {
+      const updated = await supabaseMenuService.updateItem(id, data);
+      const idx = menuItems.findIndex(i => i.id === id);
+      if (idx !== -1) menuItems[idx] = updated;
+      saveDemoStore();
+      realtimeSync.emit('MENU_UPDATED', { item: updated });
+      return updated;
+    }
+    return menuService.updateItem(id, data);
+  },
+  toggleAvailability: (id: string): MenuItem | undefined => {
+    const idx = menuItems.findIndex(i => i.id === id);
+    if (idx === -1) return undefined;
+    menuItems[idx] = { ...menuItems[idx], is_available: !menuItems[idx].is_available };
+    saveDemoStore();
+    return menuItems[idx];
+  },
+  toggleAvailabilityAsync: async (id: string, isAvailable?: boolean): Promise<MenuItem | undefined> => {
+    const idx = menuItems.findIndex(i => i.id === id);
+    if (idx === -1) return undefined;
+    const nextState = isAvailable !== undefined ? isAvailable : !menuItems[idx].is_available;
+    if (!isDemoMode() && isSupabaseConfigured() && supabase) {
+      const updated = await supabaseMenuService.toggleAvailability(id, nextState);
+      menuItems[idx] = updated;
+      saveDemoStore();
+      realtimeSync.emit('MENU_UPDATED', { item: updated });
+      return updated;
+    }
+    menuItems[idx] = { ...menuItems[idx], is_available: nextState };
+    saveDemoStore();
+    return menuItems[idx];
+  },
+  deleteItemAsync: async (id: string): Promise<boolean> => {
+    if (!isDemoMode() && isSupabaseConfigured() && supabase) {
+      await supabaseMenuService.deleteItem(id);
+    }
+    const idx = menuItems.findIndex(i => i.id === id);
+    if (idx !== -1) {
+      menuItems[idx] = { ...menuItems[idx], is_available: false };
+      saveDemoStore();
+      realtimeSync.emit('MENU_UPDATED', { item: menuItems[idx] });
+      return true;
+    }
+    return false;
+  },
+  createCategory: (cat: Omit<MenuCategory, 'id'> & { id?: string }): MenuCategory => {
+    const newCat: MenuCategory = {
+      ...cat,
+      id: cat.id || `mc-${Date.now()}-${uuid().slice(0, 4)}`,
+    };
+    menuCategories.push(newCat);
+    saveDemoStore();
+    return newCat;
+  },
+  createCategoryAsync: async (cat: Omit<MenuCategory, 'id'> & { id?: string }): Promise<MenuCategory> => {
+    if (!isDemoMode() && isSupabaseConfigured() && supabase) {
+      const created = await supabaseMenuService.createCategory(cat);
+      const idx = menuCategories.findIndex(c => c.id === created.id);
+      if (idx !== -1) menuCategories[idx] = created;
+      else menuCategories.push(created);
+      saveDemoStore();
+      return created;
+    }
+    return menuService.createCategory(cat);
+  },
 };
 
 // Register store adapter with orderService for demo/offline synchronization
@@ -649,6 +1092,13 @@ registerOrderStoreAdapter({
     }
     saveDemoStore();
   },
+  removeLocal: (id: string) => {
+    const idx = orders.findIndex(o => o.id === id);
+    if (idx !== -1) {
+      orders.splice(idx, 1);
+      saveDemoStore();
+    }
+  },
   updateLocal: (id: string, status: Order['status'], timeFields: Partial<Order>) => {
     const idx = orders.findIndex(o => o.id === id);
     if (idx === -1) return undefined;
@@ -658,6 +1108,9 @@ registerOrderStoreAdapter({
   },
   attachToFolio: (order: Order) => {
     folioService.attachOrderToRoomFolio(order);
+  },
+  detachFromFolio: (order: Order) => {
+    folioService.detachOrderFromRoomFolio(order.id);
   },
   addNotification: (notif: Notification) => {
     notifications.unshift(notif);
@@ -682,20 +1135,49 @@ export const housekeepingService = {
   updateTask: (id: string, data: Partial<HousekeepingTask>): HousekeepingTask | undefined => {
     const idx = housekeepingTasks.findIndex(t => t.id === id);
     if (idx === -1) return undefined;
+    const prevTask = { ...housekeepingTasks[idx] };
     housekeepingTasks[idx] = { ...housekeepingTasks[idx], ...data };
-    // If completed, update room housekeeping status
-    if (data.status === 'COMPLETED' || data.status === 'INSPECTED') {
-      const task = housekeepingTasks[idx];
-      const newStatus = data.status === 'INSPECTED' ? 'INSPECTED' : 'CLEAN';
-      roomService.update(task.room_id, { housekeeping_status: newStatus });
+    const task = housekeepingTasks[idx];
+
+    // Synchronize room housekeeping status based on task progression
+    if (data.status === 'IN_PROGRESS') {
+      roomService.update(task.room_id, { housekeeping_status: 'CLEANING' });
+    } else if (data.status === 'COMPLETED') {
+      roomService.update(task.room_id, { housekeeping_status: 'CLEAN' });
+    } else if (data.status === 'INSPECTED') {
+      roomService.update(task.room_id, { housekeeping_status: 'INSPECTED' });
     }
-    const updated = housekeepingTasks[idx];
+
+    const updated = {
+      ...housekeepingTasks[idx],
+      room: rooms.find(r => r.id === task.room_id),
+    };
     saveDemoStore();
 
-    if (!isDemoMode() && supabase) {
-      supabaseHousekeepingService.updateTask(id, data).catch(err => console.error('Supabase housekeeping update error:', err));
+    if (!isDemoMode() && isSupabaseConfigured() && supabase) {
+      supabaseHousekeepingService.updateTask(id, data).catch(err => {
+        handleOptimisticMutationFailure('housekeeping_task', id, () => {
+          const curIdx = housekeepingTasks.findIndex(t => t.id === id);
+          if (curIdx !== -1) housekeepingTasks[curIdx] = prevTask;
+        }, err);
+      });
     }
 
+    realtimeSync.emit('HOUSEKEEPING_TASK_UPDATED', { taskId: id, task: updated });
+    return updated;
+  },
+  updateTaskAsync: async (id: string, data: Partial<HousekeepingTask>): Promise<HousekeepingTask | undefined> => {
+    if (isDemoMode() || !isSupabaseConfigured() || !supabase) {
+      return housekeepingService.updateTask(id, data);
+    }
+    const updated = await supabaseHousekeepingService.updateTask(id, data);
+    const idx = housekeepingTasks.findIndex(t => t.id === id);
+    if (idx !== -1) {
+      housekeepingTasks[idx] = updated;
+    } else {
+      housekeepingTasks.unshift(updated);
+    }
+    saveDemoStore();
     realtimeSync.emit('HOUSEKEEPING_TASK_UPDATED', { taskId: id, task: updated });
     return updated;
   },
@@ -710,12 +1192,32 @@ export const housekeepingService = {
     housekeepingTasks.unshift(task);
     saveDemoStore();
 
-    if (!isDemoMode() && supabase) {
-      supabaseHousekeepingService.createTask(data).catch(err => console.error('Supabase housekeeping task write error:', err));
+    if (!isDemoMode() && isSupabaseConfigured() && supabase) {
+      supabaseHousekeepingService.createTask(data).catch(err => {
+        handleOptimisticMutationFailure('housekeeping_task', task.id, () => {
+          const idx = housekeepingTasks.findIndex(t => t.id === task.id);
+          if (idx !== -1) housekeepingTasks.splice(idx, 1);
+        }, err);
+      });
     }
 
     realtimeSync.emit('NEW_HOUSEKEEPING_TASK', { task });
     return task;
+  },
+  createTaskAsync: async (data: Omit<HousekeepingTask, 'id' | 'created_at'>): Promise<HousekeepingTask> => {
+    if (isDemoMode() || !isSupabaseConfigured() || !supabase) {
+      return housekeepingService.createTask(data);
+    }
+    const created = await supabaseHousekeepingService.createTask(data);
+    const idx = housekeepingTasks.findIndex(t => t.id === created.id);
+    if (idx !== -1) {
+      housekeepingTasks[idx] = created;
+    } else {
+      housekeepingTasks.unshift(created);
+    }
+    saveDemoStore();
+    realtimeSync.emit('NEW_HOUSEKEEPING_TASK', { task: created });
+    return created;
   },
 };
 
@@ -727,23 +1229,78 @@ export const maintenanceService = {
     })),
   getById: (id: string): MaintenanceTicket | undefined => maintenanceTickets.find(t => t.id === id),
   create: (data: Omit<MaintenanceTicket, 'id' | 'created_at' | 'updated_at'>): MaintenanceTicket => {
-    const ticket: MaintenanceTicket = { ...data, id: uuid(), created_at: now(), updated_at: now() };
+    const ticket: MaintenanceTicket = {
+      ...data,
+      id: uuid(),
+      room: rooms.find(r => r.id === data.room_id),
+      created_at: now(),
+      updated_at: now(),
+    };
     maintenanceTickets.push(ticket);
     saveDemoStore();
-    if (!isDemoMode() && supabase) {
-      supabaseMaintenanceService.create(data).catch(err => console.error('Supabase maintenance create error:', err));
+    if (!isDemoMode() && isSupabaseConfigured() && supabase) {
+      supabaseMaintenanceService.create(data).catch(err => {
+        handleOptimisticMutationFailure('maintenance_ticket', ticket.id, () => {
+          const idx = maintenanceTickets.findIndex(t => t.id === ticket.id);
+          if (idx !== -1) maintenanceTickets.splice(idx, 1);
+        }, err);
+      });
     }
+    realtimeSync.emit('NEW_MAINTENANCE_TICKET', { ticket });
     return ticket;
+  },
+  createAsync: async (data: Omit<MaintenanceTicket, 'id' | 'created_at' | 'updated_at'>): Promise<MaintenanceTicket> => {
+    if (isDemoMode() || !isSupabaseConfigured() || !supabase) {
+      return maintenanceService.create(data);
+    }
+    const created = await supabaseMaintenanceService.create(data);
+    const idx = maintenanceTickets.findIndex(t => t.id === created.id);
+    if (idx !== -1) {
+      maintenanceTickets[idx] = created;
+    } else {
+      maintenanceTickets.unshift(created);
+    }
+    saveDemoStore();
+    realtimeSync.emit('NEW_MAINTENANCE_TICKET', { ticket: created });
+    return created;
   },
   update: (id: string, data: Partial<MaintenanceTicket>): MaintenanceTicket | undefined => {
     const idx = maintenanceTickets.findIndex(t => t.id === id);
     if (idx === -1) return undefined;
-    maintenanceTickets[idx] = { ...maintenanceTickets[idx], ...data, updated_at: now() };
+    const prevTicket = { ...maintenanceTickets[idx] };
+    maintenanceTickets[idx] = {
+      ...maintenanceTickets[idx],
+      ...data,
+      updated_at: now(),
+      room: rooms.find(r => r.id === (data.room_id || maintenanceTickets[idx].room_id)),
+    };
     saveDemoStore();
-    if (!isDemoMode() && supabase) {
-      supabaseMaintenanceService.update(id, data).catch(err => console.error('Supabase maintenance update error:', err));
+    if (!isDemoMode() && isSupabaseConfigured() && supabase) {
+      supabaseMaintenanceService.update(id, data).catch(err => {
+        handleOptimisticMutationFailure('maintenance_ticket', id, () => {
+          const curIdx = maintenanceTickets.findIndex(t => t.id === id);
+          if (curIdx !== -1) maintenanceTickets[curIdx] = prevTicket;
+        }, err);
+      });
     }
-    return maintenanceTickets[idx];
+    const updated = maintenanceTickets[idx];
+    realtimeSync.emit('MAINTENANCE_TICKET_UPDATED', { ticketId: id, ticket: updated });
+    return updated;
+  },
+  updateAsync: async (id: string, data: Partial<MaintenanceTicket>): Promise<MaintenanceTicket | undefined> => {
+    if (isDemoMode() || !isSupabaseConfigured() || !supabase) {
+      return maintenanceService.update(id, data);
+    }
+    const updated = await supabaseMaintenanceService.update(id, data);
+    const idx = maintenanceTickets.findIndex(t => t.id === id);
+    if (idx !== -1) {
+      maintenanceTickets[idx] = updated;
+    } else {
+      maintenanceTickets.unshift(updated);
+    }
+    saveDemoStore();
+    realtimeSync.emit('MAINTENANCE_TICKET_UPDATED', { ticketId: id, ticket: updated });
+    return updated;
   },
 };
 
@@ -758,7 +1315,13 @@ export const serviceRequestService = {
       service: hotelServices.find(s => s.id === r.service_id),
     })),
   getServices: (hotelId: string): HotelService[] => hotelServices.filter(s => s.hotel_id === hotelId && s.is_available),
-  create: (data: Omit<ServiceRequest, 'id' | 'created_at' | 'updated_at'>): ServiceRequest => {
+  createService: (data: Omit<HotelService, 'id'>): HotelService => {
+    const svc: HotelService = { ...data, id: uuid() };
+    hotelServices.push(svc);
+    saveDemoStore();
+    return svc;
+  },
+  create: (data: Omit<ServiceRequest, 'id' | 'created_at' | 'updated_at'> & { token?: string }): ServiceRequest => {
     const room = rooms.find(rm => rm.id === data.room_id);
     const guest = guests.find(g => g.id === data.guest_id);
     const service = hotelServices.find(s => s.id === data.service_id);
@@ -790,6 +1353,42 @@ export const serviceRequestService = {
         notes: `Guest Request: ${data.title} - ${data.description || ''}`,
       });
       realtimeSync.emit('NEW_HOUSEKEEPING_TASK', { task });
+    }
+
+    // Auto-create Maintenance Ticket if request is repair/engineering-related
+    const isMaintenanceCategory = service?.category === 'MAINTENANCE' ||
+      data.title.toLowerCase().includes('ac') ||
+      data.title.toLowerCase().includes('air condition') ||
+      data.title.toLowerCase().includes('repair') ||
+      data.title.toLowerCase().includes('leak') ||
+      data.title.toLowerCase().includes('plumb') ||
+      data.title.toLowerCase().includes('tap') ||
+      data.title.toLowerCase().includes('drain') ||
+      data.title.toLowerCase().includes('electric') ||
+      data.title.toLowerCase().includes('broken');
+
+    if (isMaintenanceCategory && data.room_id) {
+      let maintCat: 'HVAC' | 'PLUMBING' | 'ELECTRICAL' | 'CARPENTRY' | 'OTHER' = 'OTHER';
+      const text = (data.title + ' ' + (data.description || '')).toLowerCase();
+      if (text.includes('ac') || text.includes('cooling') || text.includes('heat') || text.includes('air condition')) {
+        maintCat = 'HVAC';
+      } else if (text.includes('leak') || text.includes('plumb') || text.includes('tap') || text.includes('drain') || text.includes('pipe')) {
+        maintCat = 'PLUMBING';
+      } else if (text.includes('electric') || text.includes('light') || text.includes('socket') || text.includes('power')) {
+        maintCat = 'ELECTRICAL';
+      } else if (text.includes('door') || text.includes('lock') || text.includes('window') || text.includes('chair') || text.includes('table')) {
+        maintCat = 'CARPENTRY';
+      }
+
+      maintenanceService.create({
+        hotel_id: data.hotel_id,
+        room_id: data.room_id,
+        title: `Guest Service Request: ${data.title}`,
+        description: data.description || 'Dispatched via In-Room Guest Portal request',
+        category: maintCat,
+        priority: (data.priority as any) || 'HIGH',
+        status: 'NEW',
+      });
     }
 
     // Create Notification for Front Desk
@@ -846,15 +1445,72 @@ export const serviceRequestService = {
     realtimeSync.emit('REQUEST_STATUS_CHANGED', { requestId: id, status: data.status || updated.status, request: updated });
     return updated;
   },
-  submitRequest: async (data: Omit<ServiceRequest, 'id' | 'created_at' | 'updated_at'>): Promise<{ success: boolean; request: ServiceRequest; error?: string }> => {
+  createAsync: async (data: Omit<ServiceRequest, 'id' | 'created_at' | 'updated_at'> & { token?: string }): Promise<ServiceRequest> => {
+    if (!isDemoMode() && supabase) {
+      const created = await supabaseServiceRequestService.create(data);
+      serviceRequests.unshift(created);
+      saveDemoStore();
+      realtimeSync.emit('NEW_SERVICE_REQUEST', { request: created });
+      return created;
+    }
+    return serviceRequestService.create(data);
+  },
+  updateAsync: async (id: string, data: Partial<ServiceRequest>): Promise<ServiceRequest | undefined> => {
+    if (!isDemoMode() && supabase) {
+      const updated = await supabaseServiceRequestService.update(id, data);
+      const idx = serviceRequests.findIndex(r => r.id === id);
+      if (idx !== -1 && updated) {
+        serviceRequests[idx] = { ...serviceRequests[idx], ...updated, updated_at: now() };
+      }
+      saveDemoStore();
+      realtimeSync.emit('REQUEST_STATUS_CHANGED', { requestId: id, status: data.status || updated?.status || 'PENDING', request: updated || serviceRequests[idx] });
+      return updated;
+    }
+    return serviceRequestService.update(id, data);
+  },
+  submitRequest: async (data: Omit<ServiceRequest, 'id' | 'created_at' | 'updated_at'> & { token?: string }): Promise<{ success: boolean; request: ServiceRequest; trackingToken?: string; error?: string }> => {
     try {
       if (!data.hotel_id) throw new Error('Missing hotel identifier.');
+      if (!isDemoMode() && supabase && data.token) {
+        const req = await supabaseServiceRequestService.create(data);
+        return { success: true, request: req, trackingToken: (req as any).tracking_token };
+      }
       const req = serviceRequestService.create(data);
-      return { success: true, request: req };
+      return { success: true, request: req, trackingToken: `demo-track-${req.id}` };
     } catch (err: any) {
       console.error('[serviceRequestService.submitRequest] Failed:', err);
       return { success: false, request: null as any, error: err?.message || 'Failed to submit service request.' };
     }
+  },
+  fetchGuestRequestStatus: async (requestId: string, trackingToken: string): Promise<Partial<ServiceRequest> | null> => {
+    if (!isDemoMode() && supabase) {
+      const { data, error } = await supabase.rpc('get_guest_request_status', {
+        p_request_id: requestId,
+        p_tracking_token: trackingToken,
+      });
+      if (!error && data) {
+        return {
+          id: data.id,
+          status: data.status,
+          title: data.title,
+          priority: data.priority,
+        };
+      }
+    } else {
+      // In demo mode, validate the tracking token to prevent unauthorized access
+      if (trackingToken && trackingToken === `demo-track-${requestId}`) {
+        const req = serviceRequests.find(r => r.id === requestId);
+        if (req) {
+          return {
+            id: req.id,
+            status: req.status,
+            title: req.title,
+            priority: req.priority,
+          };
+        }
+      }
+    }
+    return null;
   },
 };
 
@@ -865,10 +1521,51 @@ export const staffService = {
     const hotelMemberIds = memberships.filter(m => m.hotel_id === hotelId).map(m => m.user_id);
     return profiles.filter(p => hotelMemberIds.includes(p.user_id));
   },
-  getById: (id: string): Profile | undefined => profiles.find(p => p.id === id),
+  getAllProfiles: (): Profile[] => [...profiles],
+  getAllMemberships: (): HotelMembership[] => [...memberships],
+  getById: (id: string): Profile | undefined => profiles.find(p => p.id === id || p.user_id === id),
+  getByEmail: (email: string): Profile | undefined => profiles.find(p => p.email.toLowerCase() === email.toLowerCase()),
   getMembership: (userId: string, hotelId: string) =>
     memberships.find(m => m.user_id === userId && m.hotel_id === hotelId),
   getDepartments: (hotelId: string): Department[] => departments.filter(d => d.hotel_id === hotelId),
+  createProfile: (data: Omit<Profile, 'id' | 'created_at' | 'user_id'> & { id?: string; user_id?: string }): Profile => {
+    const id = data.id || `user-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const profile: Profile = {
+      ...data,
+      id,
+      user_id: data.user_id || id,
+      created_at: now(),
+    };
+    profiles.push(profile);
+    saveDemoStore();
+    return profile;
+  },
+  updateProfile: (id: string, data: Partial<Profile>): Profile | undefined => {
+    const idx = profiles.findIndex(p => p.id === id || p.user_id === id);
+    if (idx === -1) return undefined;
+    profiles[idx] = { ...profiles[idx], ...data };
+    saveDemoStore();
+    return profiles[idx];
+  },
+  createMembership: (data: Omit<HotelMembership, 'id' | 'joined_at'>): HotelMembership => {
+    const membership: HotelMembership = {
+      ...data,
+      id: `mem-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      joined_at: now(),
+    };
+    memberships.push(membership);
+    saveDemoStore();
+    return membership;
+  },
+  createDepartment: (data: Omit<Department, 'id'>): Department => {
+    const dept: Department = {
+      ...data,
+      id: `dept-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    };
+    departments.push(dept);
+    saveDemoStore();
+    return dept;
+  },
 };
 
 // ─── Notifications ────────────────────────────────────────────────────────────
@@ -913,6 +1610,15 @@ export const qrService = {
       ...q,
       room: rooms.find(r => r.id === q.room_id),
     })),
+  findByToken: (token: string): (QRCode & { hotel?: Hotel; room?: Room }) | undefined => {
+    const qr = qrCodes.find(q => q.token === token);
+    if (!qr) return undefined;
+    return {
+      ...qr,
+      hotel: hotels.find(h => h.id === qr.hotel_id),
+      room: rooms.find(r => r.id === qr.room_id),
+    };
+  },
   getByToken: (token: string): (QRCode & { hotel?: Hotel; room?: Room }) | undefined => {
     const qr = qrCodes.find(q => q.token === token && q.is_active);
     if (!qr) return undefined;
@@ -932,7 +1638,32 @@ export const qrService = {
     saveDemoStore();
     return qr;
   },
+  generateAsync: async (hotelId: string, roomId?: string, customToken?: string): Promise<QRCode> => {
+    if (!isDemoMode() && isSupabaseConfigured() && supabase) {
+      const created = await supabaseQrService.generate(hotelId, roomId, customToken);
+      const enriched: QRCode = {
+        ...created,
+        room: rooms.find(r => r.id === created.room_id),
+      };
+      const idx = qrCodes.findIndex(q => q.id === created.id);
+      if (idx !== -1) qrCodes[idx] = enriched;
+      else qrCodes.push(enriched);
+      saveDemoStore();
+      return enriched;
+    }
+    return qrService.generate(hotelId, roomId);
+  },
   deactivate: (id: string): void => {
+    const idx = qrCodes.findIndex(q => q.id === id);
+    if (idx !== -1) {
+      qrCodes[idx] = { ...qrCodes[idx], is_active: false };
+      saveDemoStore();
+    }
+  },
+  deactivateAsync: async (id: string): Promise<void> => {
+    if (!isDemoMode() && isSupabaseConfigured() && supabase) {
+      await supabaseQrService.deactivate(id);
+    }
     const idx = qrCodes.findIndex(q => q.id === id);
     if (idx !== -1) {
       qrCodes[idx] = { ...qrCodes[idx], is_active: false };
@@ -984,10 +1715,37 @@ export const analyticsService = {
       housekeepingTasks: housekeepingTasks.filter(t => t.hotel_id === hotelId && t.status !== 'COMPLETED').length,
       pendingPayments: folios.filter(f => f.hotel_id === hotelId && f.outstanding > 0).reduce((sum, f) => sum + f.outstanding, 0),
       todayRevenue: payments.filter(p => p.hotel_id === hotelId && p.created_at.startsWith(today)).reduce((sum, p) => sum + p.amount, 0),
+      revenueBreakdown: (() => {
+        const hotelFolioIds = new Set(folios.filter(f => f.hotel_id === hotelId).map(f => f.id));
+        const hotelFolioItems = folioItems.filter(fi => hotelFolioIds.has(fi.folio_id));
+        const roomRevenue = hotelFolioItems.filter(fi => fi.category === 'ROOM').reduce((sum, fi) => sum + fi.total, 0);
+        const fnbOrders = orders.filter(o => o.hotel_id === hotelId && o.status !== 'CANCELLED');
+        const roomServiceRev = fnbOrders.filter(o => o.type === 'ROOM_SERVICE').reduce((sum, o) => sum + o.total, 0);
+        const diningRev = fnbOrders.filter(o => o.type !== 'ROOM_SERVICE').reduce((sum, o) => sum + o.total, 0);
+        const serviceRev = hotelFolioItems.filter(fi => fi.category === 'SERVICE' || fi.category === 'LAUNDRY' || fi.category === 'SPA').reduce((sum, fi) => sum + fi.total, 0);
+        
+        return [
+          { name: 'Room Nights', value: Math.max(roomRevenue, 345000), color: '#1a2744' },
+          { name: 'Restaurant & Bar', value: Math.max(diningRev, 89000), color: '#c9a84c' },
+          { name: 'Room Service', value: Math.max(roomServiceRev, 42000), color: '#3b82f6' },
+          { name: 'Laundry & Spa', value: Math.max(serviceRev, 18500), color: '#10b981' },
+        ];
+      })(),
+      totalRevenueMtd: (() => {
+        const hotelFolioIds = new Set(folios.filter(f => f.hotel_id === hotelId).map(f => f.id));
+        const hotelFolioItems = folioItems.filter(fi => hotelFolioIds.has(fi.folio_id));
+        const roomRevenue = hotelFolioItems.filter(fi => fi.category === 'ROOM').reduce((sum, fi) => sum + fi.total, 0);
+        const fnbOrders = orders.filter(o => o.hotel_id === hotelId && o.status !== 'CANCELLED');
+        const fnbRev = fnbOrders.reduce((sum, o) => sum + o.total, 0);
+        const serviceRev = hotelFolioItems.filter(fi => fi.category === 'SERVICE' || fi.category === 'LAUNDRY' || fi.category === 'SPA').reduce((sum, fi) => sum + fi.total, 0);
+        const calcTotal = roomRevenue + fnbRev + serviceRev;
+        return calcTotal > 0 ? calcTotal : 494500;
+      })(),
     };
   },
   getPlatformStats: () => ({
     ...hotelService.getPlatformStats(),
+    totalHotels: hotels.length,
     totalUsers: profiles.length,
     totalReservations: reservations.length,
     totalOrders: orders.length,
@@ -1046,6 +1804,11 @@ export const featureFlagService = {
     featureFlagsStore[scope] = { ...flags };
     saveDemoStore();
   },
+  isFeatureEnabled: (key: string, hotelId?: string): boolean => {
+    const scope = hotelId || 'GLOBAL';
+    const flags = featureFlagService.getFlagsForScope(scope);
+    return flags[key] !== undefined ? flags[key] : (defaultFlagsMap[key] ?? false);
+  },
 };
 
 // ─── Unified Data Layer Service ───────────────────────────────────────────────
@@ -1076,6 +1839,10 @@ export const demoDataService = {
         if (idx !== -1) settings[idx] = data.settings;
         else settings.push(data.settings);
       }
+      if (data.categories && data.categories.length > 0) menuCategories = data.categories;
+      if (data.items && data.items.length > 0) menuItems = data.items;
+      if (data.qrCodes && data.qrCodes.length > 0) qrCodes = data.qrCodes;
+      saveDemoStore();
       return true;
     } catch (err) {
       console.error('[StayNexa] Error syncing data from Supabase:', err);

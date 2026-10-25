@@ -3,7 +3,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import type { UserRole, Profile } from '../types';
 import { DEMO_PROFILES, DEMO_MEMBERSHIPS } from '../data/demo';
 import { supabase, isDemoMode } from '../lib/supabase';
-import { demoDataService } from '../services/demoDataService';
+import { demoDataService, staffService, hotelService } from '../services/demoDataService';
 
 export interface AuthUser {
   id: string;
@@ -90,7 +90,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           .single();
 
         if (profileErr || !profile) {
-          console.error('[StayNexa Auth] Profile not found for authenticated user');
+          console.error('[StayNexa Auth] Profile not found for authenticated user:', profileErr);
+          if (isMounted) {
+            setUser(null);
+            setIsLoading(false);
+          }
+          return;
+        }
+
+        if (!profile.is_active) {
+          console.warn('[StayNexa Auth] Authenticated user profile is deactivated:', profile.email);
           if (isMounted) {
             setUser(null);
             setIsLoading(false);
@@ -109,7 +118,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             .limit(1)
             .maybeSingle();
 
-          hotelId = membership?.hotel_id;
+          if (!membership?.hotel_id) {
+            console.warn('[StayNexa Auth] No active hotel membership found for staff:', profile.email);
+            if (isMounted) {
+              setUser(null);
+              setIsLoading(false);
+            }
+            return;
+          }
+
+          hotelId = membership.hotel_id;
         }
 
         // Hydrate service layer with active PostgreSQL hotel data
@@ -176,22 +194,53 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         .eq('user_id', data.user.id)
         .single();
 
-      if (profileErr || !profile) {
-        return { error: 'Your account is authenticated, but no staff profile is configured for this hotel.' };
+      if (profileErr) {
+        console.error('[StayNexa Auth] Profile lookup error:', profileErr);
+        return { error: `Profile lookup failed: ${profileErr.message || 'database error'}` };
+      }
+
+      if (!profile) {
+        return { error: 'Your account is authenticated, but no staff profile is configured for this platform.' };
+      }
+
+      if (!profile.is_active) {
+        await supabase.auth.signOut();
+        return { error: 'This user account has been deactivated. Please contact platform administrator.' };
       }
 
       // Fetch active hotel membership
       let hotelId: string | undefined;
       if (profile.role !== 'SUPER_ADMIN') {
-        const { data: membership } = await supabase
+        const { data: membership, error: memErr } = await supabase
           .from('hotel_memberships')
-          .select('hotel_id')
+          .select('hotel_id, is_active')
           .eq('user_id', data.user.id)
           .eq('is_active', true)
           .limit(1)
           .maybeSingle();
 
-        hotelId = membership?.hotel_id;
+        if (memErr) {
+          console.error('[StayNexa Auth] Error fetching membership:', memErr);
+          return { error: 'Unable to verify hotel membership. Please contact your administrator.' };
+        }
+
+        if (!membership || !membership.hotel_id) {
+          // Check if user has an inactive membership to provide a clear, actionable message
+          const { data: inactiveMem } = await supabase
+            .from('hotel_memberships')
+            .select('id, is_active')
+            .eq('user_id', data.user.id)
+            .limit(1)
+            .maybeSingle();
+
+          await supabase.auth.signOut();
+          if (inactiveMem) {
+            return { error: 'Your hotel staff membership has been deactivated. Please contact hotel administration.' };
+          }
+          return { error: 'Your account is authenticated, but no active hotel membership was found.' };
+        }
+
+        hotelId = membership.hotel_id;
       }
 
       const authUser: AuthUser = {
@@ -217,20 +266,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     // ─── 2. DEMO MODE IN-MEMORY AUTH ──────────────────────────────────────────
     const creds = DEMO_CREDENTIALS[email.toLowerCase()];
-    if (!creds || creds.password !== password) {
+    let profile = creds ? staffService.getById(creds.userId) : staffService.getByEmail(email);
+
+    if (!profile) {
+      if (creds) {
+        profile = DEMO_PROFILES.find(p => p.user_id === creds.userId);
+      } else {
+        profile = DEMO_PROFILES.find(p => p.email.toLowerCase() === email.toLowerCase());
+      }
+    }
+
+    const expectedPassword = creds ? creds.password : 'demo123';
+    if (!profile || expectedPassword !== password) {
       return { error: 'Invalid email or password. Use any demo credential (e.g. vikram@grandpalace.com / demo123).' };
     }
 
-    const profile = DEMO_PROFILES.find(p => p.user_id === creds.userId);
-    if (!profile) {
-      return { error: 'Demo profile not found.' };
+    if (!profile.is_active) {
+      return { error: 'This user account has been deactivated. Please contact platform administrator.' };
     }
 
     // Determine hotel context from memberships
     let hotelId: string | undefined;
     if (profile.role !== 'SUPER_ADMIN') {
-      const membership = DEMO_MEMBERSHIPS.find(m => m.user_id === profile.user_id && m.is_active);
+      const allMemberships = staffService.getAllMemberships();
+      const membership = allMemberships.find(m => m.user_id === profile!.user_id && m.is_active)
+        || DEMO_MEMBERSHIPS.find(m => m.user_id === profile!.user_id && m.is_active);
       hotelId = membership?.hotel_id;
+
+      if (hotelId) {
+        const hotel = hotelService.getById(hotelId);
+        if (hotel && (hotel.status === 'SUSPENDED' || hotel.status === 'ARCHIVED')) {
+          return { error: `Access restricted. Hotel property "${hotel.name}" is currently ${hotel.status.toLowerCase()}.` };
+        }
+      }
     }
 
     const authUser = profileToAuthUser(profile, hotelId);

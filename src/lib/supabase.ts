@@ -24,6 +24,9 @@ export function isSupabaseConfigured(): boolean {
   if (supabaseUrl.includes('your-project-id') || supabaseAnonKey.includes('your-anon-key')) {
     return false;
   }
+  if (!supabaseUrl.startsWith('http://') && !supabaseUrl.startsWith('https://')) {
+    return false;
+  }
   return true;
 }
 
@@ -31,7 +34,14 @@ export function isSupabaseConfigured(): boolean {
  * Determines whether the app is currently running in Demo Mode
  */
 export function isDemoMode(): boolean {
-  // In demo mode if credentials missing OR explicitly set to 'demo'
+  // In production mode, NEVER silently fall back to demo mode
+  if (appMode === 'production') {
+    if (!isSupabaseConfigured()) {
+      console.error('[SECURITY FATAL] VITE_APP_MODE is set to production but Supabase credentials are missing or invalid.');
+    }
+    return false;
+  }
+  // In demo or unset mode: demo mode if credentials missing OR explicitly set to 'demo'
   if (!isSupabaseConfigured()) return true;
   return appMode === 'demo';
 }
@@ -46,12 +56,26 @@ export function getSupabaseClient(): SupabaseClient | null {
 /**
  * Supabase client instance (or null in demo mode when credentials missing)
  */
-export const supabase: SupabaseClient | null = isSupabaseConfigured()
-  ? createClient(supabaseUrl!, supabaseAnonKey!, {
-      auth: {
-        autoRefreshToken: true,
-        persistSession: true,
-        detectSessionInUrl: true,
-      },
-    })
+export let supabase: SupabaseClient | null = isSupabaseConfigured()
+  ? (() => {
+      try {
+        return createClient(supabaseUrl!, supabaseAnonKey!, {
+          auth: {
+            autoRefreshToken: true,
+            persistSession: true,
+            detectSessionInUrl: true,
+          },
+        });
+      } catch (e) {
+        console.warn('[StayNexa] Failed to initialize Supabase client with current credentials:', e);
+        return null;
+      }
+    })()
   : null;
+
+/**
+ * Test helper to inject a mock SupabaseClient during unit testing
+ */
+export function setSupabaseClientForTesting(client: SupabaseClient | null) {
+  supabase = client;
+}

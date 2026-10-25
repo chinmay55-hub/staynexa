@@ -12,6 +12,22 @@ dist
 dist-ssr
 *.local
 
+# Environment variables (preserve template only)
+.env
+.env.*
+!.env.example
+
+# Database backups, dumps, and staging export artifacts
+*.dump.sql
+*.backup.sql
+pre_migration_*backup.sql
+*.dump
+*.backup
+backups/
+backups/**
+scratch/
+scratch/**
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

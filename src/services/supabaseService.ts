@@ -6,7 +6,8 @@ import { supabase } from '../lib/supabase';
 import type { 
   Hotel, HotelBranding, HotelSettings, RoomType, Room, Guest, 
   Reservation, Folio, FolioItem, Payment, Order, OrderItem, HousekeepingTask, 
-  MaintenanceTicket, QRCode, Subscription, ServiceRequest, Notification, ActivityLog
+  MaintenanceTicket, QRCode, Subscription, ServiceRequest, Notification, ActivityLog,
+  MenuCategory, MenuItem
 } from '../types';
 
 /**
@@ -159,6 +160,13 @@ export const supabaseRoomService = {
     const { data, error } = await client.from('rooms').update(updates).eq('id', roomId).select().single();
     if (error) throw error;
     return data;
+  },
+
+  async delete(roomId: string): Promise<void> {
+    const client = getClient();
+    // Safe archive: set is_active = false to avoid foreign key errors with reservations/tasks
+    const { error } = await client.from('rooms').update({ is_active: false }).eq('id', roomId);
+    if (error) throw error;
   },
 };
 
@@ -517,8 +525,27 @@ export const supabaseServiceRequestService = {
     return data || [];
   },
 
-  async create(data: Omit<ServiceRequest, 'id' | 'created_at' | 'updated_at'>): Promise<ServiceRequest> {
+  async create(data: Omit<ServiceRequest, 'id' | 'created_at' | 'updated_at'> & { token?: string }): Promise<ServiceRequest> {
     const client = getClient();
+
+    if (data.token) {
+      const { data: rpcData, error: rpcErr } = await client.rpc('create_guest_service_request', {
+        p_token: data.token,
+        p_service_id: data.service_id || null,
+        p_title: data.title || null,
+        p_description: data.description || null,
+        p_priority: data.priority || 'MEDIUM',
+      });
+      if (rpcErr) throw rpcErr;
+      return {
+        ...data,
+        id: rpcData.id,
+        status: (rpcData.status || 'PENDING') as any,
+        created_at: rpcData.created_at || new Date().toISOString(),
+        updated_at: rpcData.created_at || new Date().toISOString(),
+      };
+    }
+
     const { data: request, error } = await client
       .from('service_requests')
       .insert({
@@ -632,22 +659,6 @@ export const supabaseNotificationService = {
   },
 };
 
-// ─── QR Code Resolution ───────────────────────────────────────────────────────
-
-export const supabaseQrService = {
-  async getByToken(token: string): Promise<QRCode | null> {
-    const client = getClient();
-    const { data, error } = await client
-      .from('qr_codes')
-      .select('*, room:rooms(*), hotel:hotels(*)')
-      .eq('token', token)
-      .eq('is_active', true)
-      .maybeSingle();
-    if (error) throw error;
-    return data;
-  },
-};
-
 // ─── Maintenance Tickets ──────────────────────────────────────────────────────
 
 export const supabaseMaintenanceService = {
@@ -695,6 +706,148 @@ export const supabaseMaintenanceService = {
   },
 };
 
+// ─── Menu Categories & Items ──────────────────────────────────────────────────
+
+export const supabaseMenuService = {
+  async getCategories(hotelId: string): Promise<MenuCategory[]> {
+    const client = getClient();
+    const { data, error } = await client
+      .from('menu_categories')
+      .select('*')
+      .eq('hotel_id', hotelId)
+      .order('sort_order', { ascending: true });
+    if (error) throw error;
+    return data || [];
+  },
+
+  async getItems(hotelId: string): Promise<MenuItem[]> {
+    const client = getClient();
+    const { data, error } = await client
+      .from('menu_items')
+      .select('*')
+      .eq('hotel_id', hotelId)
+      .order('name');
+    if (error) throw error;
+    return data || [];
+  },
+
+  async createCategory(cat: Omit<MenuCategory, 'id'>): Promise<MenuCategory> {
+    const client = getClient();
+    const { data, error } = await client
+      .from('menu_categories')
+      .insert({
+        ...cat,
+        created_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
+  async createItem(item: Omit<MenuItem, 'id'>): Promise<MenuItem> {
+    const client = getClient();
+    const { data, error } = await client
+      .from('menu_items')
+      .insert({
+        ...item,
+        created_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
+  async updateItem(id: string, updates: Partial<MenuItem>): Promise<MenuItem> {
+    const client = getClient();
+    const { data, error } = await client
+      .from('menu_items')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
+  async toggleAvailability(id: string, isAvailable: boolean): Promise<MenuItem> {
+    const client = getClient();
+    const { data, error } = await client
+      .from('menu_items')
+      .update({ is_available: isAvailable })
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
+  async deleteItem(id: string): Promise<void> {
+    const client = getClient();
+    // Safe archive: set is_available = false so existing order history is never broken
+    const { error } = await client
+      .from('menu_items')
+      .update({ is_available: false })
+      .eq('id', id);
+    if (error) throw error;
+  },
+};
+
+// ─── QR Codes ─────────────────────────────────────────────────────────────────
+
+export const supabaseQrService = {
+  async getByToken(token: string): Promise<QRCode | null> {
+    const client = getClient();
+    const { data, error } = await client
+      .from('qr_codes')
+      .select('*, room:rooms(*), hotel:hotels(*)')
+      .eq('token', token)
+      .eq('is_active', true)
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  },
+
+  async getAll(hotelId: string): Promise<QRCode[]> {
+    const client = getClient();
+    const { data, error } = await client
+      .from('qr_codes')
+      .select('*, room:rooms(*)')
+      .eq('hotel_id', hotelId);
+    if (error) throw error;
+    return data || [];
+  },
+
+  async generate(hotelId: string, roomId?: string, customToken?: string): Promise<QRCode> {
+    const client = getClient();
+    const token = customToken || `gp-r${roomId ? roomId.slice(-3) : 'hotel'}-${Math.random().toString(36).slice(2, 8)}`;
+    const { data, error } = await client
+      .from('qr_codes')
+      .insert({
+        hotel_id: hotelId,
+        room_id: roomId || null,
+        token,
+        type: roomId ? 'ROOM' : 'HOTEL',
+        is_active: true,
+        created_at: new Date().toISOString(),
+      })
+      .select('*, room:rooms(*)')
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
+  async deactivate(id: string): Promise<void> {
+    const client = getClient();
+    const { error } = await client
+      .from('qr_codes')
+      .update({ is_active: false })
+      .eq('id', id);
+    if (error) throw error;
+  },
+};
+
 // ─── Full Hotel State Sync (Production Cache Hydration) ───────────────────────
 
 export const supabaseSyncService = {
@@ -715,6 +868,7 @@ export const supabaseSyncService = {
       servicesRes,
       categoriesRes,
       itemsRes,
+      qrCodesRes,
     ] = await Promise.allSettled([
       client.from('rooms').select('*, room_type:room_types(*)').eq('hotel_id', hotelId),
       client.from('room_types').select('*').eq('hotel_id', hotelId),
@@ -730,6 +884,7 @@ export const supabaseSyncService = {
       client.from('hotel_services').select('*').eq('hotel_id', hotelId),
       client.from('menu_categories').select('*').eq('hotel_id', hotelId),
       client.from('menu_items').select('*').eq('hotel_id', hotelId),
+      client.from('qr_codes').select('*, room:rooms(*)').eq('hotel_id', hotelId),
     ]);
 
     return {
@@ -747,6 +902,7 @@ export const supabaseSyncService = {
       services: servicesRes.status === 'fulfilled' && servicesRes.value.data ? servicesRes.value.data : undefined,
       categories: categoriesRes.status === 'fulfilled' && categoriesRes.value.data ? categoriesRes.value.data : undefined,
       items: itemsRes.status === 'fulfilled' && itemsRes.value.data ? itemsRes.value.data : undefined,
+      qrCodes: qrCodesRes.status === 'fulfilled' && qrCodesRes.value.data ? qrCodesRes.value.data : undefined,
     };
   },
 };
