@@ -39,7 +39,7 @@ export default function RoomBoardPage() {
   const [rooms, setRooms] = useState(() => roomService.getAll(hotelId));
   const [reservations, setReservations] = useState(() => reservationService.getAll(hotelId));
   const [folios, setFolios] = useState<Folio[]>(() => folioService.getAll(hotelId));
-  const [maintenanceTickets] = useState(() => maintenanceService.getAll(hotelId));
+  const [maintenanceTickets, setMaintenanceTickets] = useState(() => maintenanceService.getAll(hotelId));
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [hkFilter, setHkFilter] = useState<string>('ALL');
   const [groupByFloor, setGroupByFloor] = useState(true);
@@ -58,6 +58,7 @@ export default function RoomBoardPage() {
       setRooms([...roomService.getAll(hotelId)]);
       setReservations([...reservationService.getAll(hotelId)]);
       setFolios([...folioService.getAll(hotelId)]);
+      setMaintenanceTickets([...maintenanceService.getAll(hotelId)]);
     };
 
     const unsubRoom = realtimeSync.subscribe('ROOM_UPDATED', refreshBoard);
@@ -66,8 +67,20 @@ export default function RoomBoardPage() {
     const unsubFolio = realtimeSync.subscribe('FOLIO_UPDATED', refreshBoard);
     const unsubOrder = realtimeSync.subscribe('NEW_ORDER', refreshBoard);
     const unsubOrderStatus = realtimeSync.subscribe('ORDER_STATUS_CHANGED', refreshBoard);
+    const unsubMaintNew = realtimeSync.subscribe('NEW_MAINTENANCE_TICKET', refreshBoard);
+    const unsubMaintUpdated = realtimeSync.subscribe('MAINTENANCE_TICKET_UPDATED', refreshBoard);
+    const unsubHkNew = realtimeSync.subscribe('NEW_HOUSEKEEPING_TASK', refreshBoard);
+    const unsubHkUpdated = realtimeSync.subscribe('HOUSEKEEPING_TASK_UPDATED', refreshBoard);
+
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'staynexa_demo_store' || e.key === 'staynexa_global_sync') {
+        refreshBoard();
+      }
+    };
+    window.addEventListener('storage', handleStorage);
 
     return () => {
+      window.removeEventListener('storage', handleStorage);
       disconnectSupabase();
       unsubRoom();
       unsubResCreated();
@@ -75,6 +88,10 @@ export default function RoomBoardPage() {
       unsubFolio();
       unsubOrder();
       unsubOrderStatus();
+      unsubMaintNew();
+      unsubMaintUpdated();
+      unsubHkNew();
+      unsubHkUpdated();
     };
   }, [hotelId]);
 

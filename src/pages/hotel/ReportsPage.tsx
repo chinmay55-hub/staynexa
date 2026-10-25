@@ -33,6 +33,8 @@ export default function ReportsPage() {
 
   const [activeTab, setActiveTab] = useState<'OCCUPANCY' | 'REVENUE' | 'HOUSEKEEPING'>('OCCUPANCY');
 
+  const stats = analyticsService.getHotelStats(hotelId);
+
   // Realistic occupancy chart data (last 14 days)
   const occupancyData = [
     { date: 'Oct 01', rate: 65 },
@@ -48,16 +50,22 @@ export default function ReportsPage() {
     { date: 'Oct 11', rate: 94 },
     { date: 'Oct 12', rate: 96 },
     { date: 'Oct 13', rate: 82 },
-    { date: 'Oct 14', rate: 75 },
+    { date: 'Oct 14', rate: stats.occupancyPercent || 75 },
   ];
 
-  // Revenue source breakdown
-  const revenueBreakdown = [
+  // Dynamic revenue source breakdown from analytics
+  const revenueBreakdown = stats.revenueBreakdown || [
     { name: 'Room Nights', value: 345000, color: '#1a2744' },
     { name: 'Restaurant & Bar', value: 89000, color: '#c9a84c' },
     { name: 'Room Service', value: 42000, color: '#3b82f6' },
     { name: 'Laundry & Spa', value: 18500, color: '#10b981' },
   ];
+
+  const totalRevenueMtd = stats.totalRevenueMtd || 494500;
+  const fnbRevenue = (revenueBreakdown.find(r => r.name === 'Restaurant & Bar')?.value || 0) + 
+                     (revenueBreakdown.find(r => r.name === 'Room Service')?.value || 0);
+  const fnbPercent = totalRevenueMtd > 0 ? ((fnbRevenue / totalRevenueMtd) * 100).toFixed(1) : '26.4';
+  const revPar = stats.totalRooms > 0 ? Math.round(totalRevenueMtd / (stats.totalRooms * 30)) : 3450;
 
   // Housekeeping efficiency turnaround
   const housekeepingMetrics = [
@@ -111,7 +119,7 @@ export default function ReportsPage() {
       {activeTab === 'OCCUPANCY' && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <StatCard label="Average Monthly Occupancy" value="78.4%" change={6} changeLabel="vs prior month" />
+            <StatCard label="Current Property Occupancy" value={`${stats.occupancyPercent}%`} change={stats.occupiedRooms} changeLabel={`of ${stats.totalRooms} rooms occupied`} />
             <StatCard label="Peak Weekend Occupancy" value="96.0%" change={4} changeLabel="Saturday nights" />
             <StatCard label="Average Length of Stay" value="2.4 Nights" change={0.3} changeLabel="days per guest" />
           </div>
@@ -135,9 +143,9 @@ export default function ReportsPage() {
       {activeTab === 'REVENUE' && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <StatCard label="Total Revenue (MTD)" value="₹4,94,500" change={18} changeLabel="all departments" />
-            <StatCard label="F&B Contribution" value="26.4%" change={3} changeLabel="share of total GMV" />
-            <StatCard label="RevPAR (Revenue/Avail Room)" value="₹3,450" change={8} changeLabel="per room/night" />
+            <StatCard label="Total Revenue (MTD)" value={`₹${totalRevenueMtd.toLocaleString('en-IN')}`} change={18} changeLabel="all departments" />
+            <StatCard label="F&B Contribution" value={`${fnbPercent}%`} change={3} changeLabel="share of total GMV" />
+            <StatCard label="RevPAR (Revenue/Avail Room)" value={`₹${revPar.toLocaleString('en-IN')}`} change={8} changeLabel="per room/night" />
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -179,8 +187,8 @@ export default function ReportsPage() {
       {activeTab === 'HOUSEKEEPING' && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <StatCard label="Rooms Clean / Inspected" value={`${stats.cleanRooms} / ${stats.totalRooms}`} changeLabel={`${stats.dirtyRooms} dirty, ${stats.cleaningRooms} cleaning`} />
             <StatCard label="Avg Checkout Clean Time" value="27 Mins" change={-4} changeLabel="faster turnaround" />
-            <StatCard label="Rooms Inspected on 1st Pass" value="94.2%" change={2} changeLabel="quality score" />
             <StatCard label="Daily Clean Queue Complete" value="100%" changeLabel="before 4:00 PM" />
           </div>
 

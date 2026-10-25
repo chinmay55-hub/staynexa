@@ -4,6 +4,7 @@ import { Outlet, Navigate } from 'react-router-dom';
 import clsx from 'clsx';
 import { useAuth } from '../../contexts/AuthContext';
 import { hotelService } from '../../services/demoDataService';
+import { isDemoMode } from '../../lib/supabase';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import type { UserRole } from '../../types';
@@ -119,7 +120,7 @@ function MainLayout() {
       {/* Main area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Header */}
-        <Header isDemoMode={true} />
+        <Header isDemoMode={isDemoMode()} />
 
         {/* Page content */}
         <main className="flex-1 overflow-y-auto">

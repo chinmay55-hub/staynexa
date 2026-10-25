@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   UtensilsCrossed, 
   Plus, 
@@ -9,10 +9,21 @@ import {
   IndianRupee, 
   Sparkles,
   Layers,
-  ChefHat
+  ChefHat,
+  Edit2,
+  Trash2,
+  Archive,
+  Loader2
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
-import { menuService, orderService, DEMO_MENU_CATEGORIES, DEMO_MENU_ITEMS } from '../../services/demoDataService';
+import { 
+  menuService, 
+  orderService, 
+  demoDataService,
+  reloadDemoStoreFromStorage 
+} from '../../services/demoDataService';
+import { isDemoMode, isSupabaseConfigured } from '../../lib/supabase';
+import { realtimeSync } from '../../services/realtimeSync';
 import type { MenuCategory, MenuItem, Order, OrderStatus } from '../../types';
 import { 
   Card, 
@@ -22,7 +33,8 @@ import {
   Input, 
   Select, 
   OrderBadge, 
-  Modal 
+  Modal,
+  useToast
 } from '../../components/ui';
 
 export default function RestaurantPage() {
@@ -35,11 +47,76 @@ export default function RestaurantPage() {
   const [orders, setOrders] = useState(() => orderService.getAll(hotelId));
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
 
+  // Mount sync with Supabase
+  useEffect(() => {
+    let isMounted = true;
+    async function syncData() {
+      if (!isDemoMode() && isSupabaseConfigured()) {
+        try {
+          await demoDataService.syncFromSupabase(hotelId);
+        } catch (e) {
+          console.warn('[RestaurantPage] Error syncing hotel data:', e);
+        }
+      }
+      if (isMounted) {
+        setCategories([...menuService.getCategories(hotelId)]);
+        setItems([...menuService.getItems(hotelId)]);
+        setOrders([...orderService.getAll(hotelId)]);
+      }
+    }
+    syncData();
+    return () => { isMounted = false; };
+  }, [hotelId]);
+
+  // Realtime & Cross-Tab Synchronization
+  useEffect(() => {
+    const refreshData = () => {
+      reloadDemoStoreFromStorage();
+      setCategories([...menuService.getCategories(hotelId)]);
+      setItems([...menuService.getItems(hotelId)]);
+      setOrders([...orderService.getAll(hotelId)]);
+    };
+
+    const unsubNewOrder = realtimeSync.subscribe('NEW_ORDER', refreshData);
+    const unsubOrderStatus = realtimeSync.subscribe('ORDER_STATUS_CHANGED', refreshData);
+    const unsubMenu = realtimeSync.subscribe('MENU_UPDATED', refreshData);
+
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'staynexa_demo_store' || e.key === 'staynexa_global_sync') {
+        refreshData();
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      unsubNewOrder();
+      unsubOrderStatus();
+      unsubMenu();
+    };
+  }, [hotelId]);
+
+  // Mutation and submission state
+  const [isSubmittingItem, setIsSubmittingItem] = useState(false);
+  const [itemError, setItemError] = useState<string | null>(null);
+
   // Add Item Modal
   const [isAddItemOpen, setIsAddItemOpen] = useState(false);
   const [newItem, setNewItem] = useState({
     name: '',
     category_id: categories[0]?.id || '',
+    price: 350,
+    is_veg: true,
+    preparation_time_minutes: 20,
+    description: '',
+  });
+
+  // Edit Item Modal
+  const [isEditItemOpen, setIsEditItemOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
+  const [editItemForm, setEditItemForm] = useState({
+    name: '',
+    category_id: '',
     price: 350,
     is_veg: true,
     preparation_time_minutes: 20,
@@ -54,30 +131,11 @@ export default function RestaurantPage() {
     selectedCategory === 'ALL' || i.category_id === selectedCategory
   );
 
-  const handleUpdateOrderStatus = (orderId: string, status: OrderStatus) => {
-    orderService.updateStatus(orderId, status);
-    setOrders([...orderService.getAll(hotelId)]);
-  };
+  const toast = useToast();
+  const [updatingOrderId, setUpdatingOrderId] = useState<string | null>(null);
 
-  const handleCreateItem = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newItem.name) return;
-    const item: MenuItem = {
-      id: `mi-${Date.now()}`,
-      hotel_id: hotelId,
-      name: newItem.name,
-      category_id: newItem.category_id,
-      price: Number(newItem.price),
-      tax_percent: 5,
-      is_veg: newItem.is_veg,
-      is_available: true,
-      tags: ['special'],
-      preparation_time_minutes: Number(newItem.preparation_time_minutes),
-      description: newItem.description,
-    };
-    DEMO_MENU_ITEMS.push(item);
-    setItems([...menuService.getItems(hotelId)]);
-    setIsAddItemOpen(false);
+  const handleOpenAddItem = () => {
+    setItemError(null);
     setNewItem({
       name: '',
       category_id: categories[0]?.id || '',
@@ -86,19 +144,139 @@ export default function RestaurantPage() {
       preparation_time_minutes: 20,
       description: '',
     });
+    setIsAddItemOpen(true);
+  };
+
+  const handleOpenEditItem = (item: MenuItem) => {
+    setItemError(null);
+    setEditingItem(item);
+    setEditItemForm({
+      name: item.name,
+      category_id: item.category_id,
+      price: item.price,
+      is_veg: item.is_veg,
+      preparation_time_minutes: item.preparation_time_minutes,
+      description: item.description || '',
+    });
+    setIsEditItemOpen(true);
+  };
+
+  const handleToggleAvailability = async (itemId: string) => {
+    try {
+      const updated = await menuService.toggleAvailabilityAsync(itemId);
+      setItems([...menuService.getItems(hotelId)]);
+      if (updated) {
+        toast.success(
+          updated.is_available ? 'Dish marked available' : 'Dish marked 86 (Sold out)',
+          `${updated.name} availability updated`
+        );
+      }
+    } catch (err: any) {
+      toast.error('Failed to toggle availability', err?.message || 'Database write error');
+    }
+  };
+
+  const handleDeleteItem = async (item: MenuItem) => {
+    if (!window.confirm(`Are you sure you want to remove "${item.name}" from the active menu?`)) return;
+    try {
+      await menuService.deleteItemAsync(item.id);
+      setItems([...menuService.getItems(hotelId)]);
+      toast.success('Dish removed', `${item.name} archived from menu`);
+    } catch (err: any) {
+      toast.error('Failed to remove dish', err?.message || 'Database write error');
+    }
+  };
+
+  const handleUpdateOrderStatus = async (orderId: string, status: OrderStatus) => {
+    if (updatingOrderId) return;
+    setUpdatingOrderId(orderId);
+    try {
+      await orderService.updateStatusAsync(orderId, status);
+      setOrders([...orderService.getAll(hotelId)]);
+      toast.success('Order status updated', `Order #${orderId.slice(-6).toUpperCase()} set to ${status}`);
+    } catch (err: any) {
+      toast.error('Failed to update order status', err?.message || 'Database write rejected');
+    } finally {
+      setUpdatingOrderId(null);
+    }
+  };
+
+  const handleCreateItem = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newItem.name || isSubmittingItem) return;
+    setItemError(null);
+    setIsSubmittingItem(true);
+    try {
+      await menuService.createItemAsync({
+        hotel_id: hotelId,
+        name: newItem.name.trim(),
+        category_id: newItem.category_id || categories[0]?.id || '',
+        price: Number(newItem.price),
+        tax_percent: 5,
+        is_veg: newItem.is_veg,
+        is_available: true,
+        tags: ['special'],
+        preparation_time_minutes: Number(newItem.preparation_time_minutes),
+        description: newItem.description.trim(),
+      });
+      setItems([...menuService.getItems(hotelId)]);
+      setIsAddItemOpen(false);
+      setNewItem({
+        name: '',
+        category_id: categories[0]?.id || '',
+        price: 350,
+        is_veg: true,
+        preparation_time_minutes: 20,
+        description: '',
+      });
+      toast.success('Dish created', `${newItem.name} saved to menu`);
+    } catch (err: any) {
+      console.error('Failed to create dish:', err);
+      const msg = err?.message || 'Database write rejected dish creation';
+      setItemError(msg);
+      toast.error('Dish creation failed', msg);
+    } finally {
+      setIsSubmittingItem(false);
+    }
+  };
+
+  const handleUpdateItem = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingItem || isSubmittingItem) return;
+    setItemError(null);
+    setIsSubmittingItem(true);
+    try {
+      await menuService.updateItemAsync(editingItem.id, {
+        name: editItemForm.name.trim(),
+        category_id: editItemForm.category_id,
+        price: Number(editItemForm.price),
+        is_veg: editItemForm.is_veg,
+        preparation_time_minutes: Number(editItemForm.preparation_time_minutes),
+        description: editItemForm.description.trim(),
+      });
+      setItems([...menuService.getItems(hotelId)]);
+      setIsEditItemOpen(false);
+      setEditingItem(null);
+      toast.success('Dish updated', `${editItemForm.name} updated successfully`);
+    } catch (err: any) {
+      console.error('Failed to update dish:', err);
+      const msg = err?.message || 'Database write rejected dish update';
+      setItemError(msg);
+      toast.error('Dish update failed', msg);
+    } finally {
+      setIsSubmittingItem(false);
+    }
   };
 
   const handleCreateCategory = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCatName) return;
-    const cat: MenuCategory = {
-      id: `mc-${Date.now()}`,
+    menuService.createCategory({
       hotel_id: hotelId,
       name: newCatName,
       sort_order: categories.length + 1,
       is_active: true,
-    };
-    DEMO_MENU_CATEGORIES.push(cat);
+    });
     setCategories([...menuService.getCategories(hotelId)]);
     setIsAddCatOpen(false);
     setNewCatName('');
@@ -123,7 +301,7 @@ export default function RestaurantPage() {
               </Button>
               <Button 
                 variant="primary" 
-                onClick={() => setIsAddItemOpen(true)}
+                onClick={handleOpenAddItem}
                 iconLeft={<Plus className="w-4 h-4" />}
               >
                 Add Menu Item
@@ -211,9 +389,37 @@ export default function RestaurantPage() {
                       <Clock className="w-3.5 h-3.5 text-stone-400" />
                       {item.preparation_time_minutes} mins prep
                     </span>
-                    <span className="text-emerald-700 font-semibold bg-emerald-50 px-2 py-0.5 rounded text-[11px]">
-                      Available
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => handleToggleAvailability(item.id)}
+                        className={`px-2 py-0.5 rounded text-[11px] font-bold transition-colors cursor-pointer border ${
+                          item.is_available !== false
+                            ? 'text-emerald-700 bg-emerald-50 border-emerald-200 hover:bg-emerald-100'
+                            : 'text-stone-500 bg-stone-100 border-stone-300 hover:bg-stone-200'
+                        }`}
+                        title="Click to toggle item availability"
+                      >
+                        {item.is_available !== false ? 'Available' : 'Sold Out (86)'}
+                      </button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleOpenEditItem(item)}
+                        title="Edit Dish"
+                        className="h-7 w-7 p-0 text-stone-500 hover:text-stone-900"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleDeleteItem(item)}
+                        title="Archive / Remove Dish"
+                        className="h-7 w-7 p-0 text-stone-400 hover:text-red-600 hover:bg-red-50"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
@@ -255,22 +461,42 @@ export default function RestaurantPage() {
                       </td>
                       <td className="py-3.5 px-4 text-right space-x-1.5">
                         {order.status === 'PENDING' && (
-                          <Button 
-                            variant="primary" 
-                            size="sm"
-                            onClick={() => handleUpdateOrderStatus(order.id, 'ACCEPTED')}
-                          >
-                            Accept
-                          </Button>
+                          <>
+                            <Button 
+                              variant="primary" 
+                              size="sm"
+                              onClick={() => handleUpdateOrderStatus(order.id, 'ACCEPTED')}
+                            >
+                              Accept
+                            </Button>
+                            <Button 
+                              variant="ghost" 
+                              size="sm"
+                              className="text-rose-600 hover:bg-rose-50"
+                              onClick={() => handleUpdateOrderStatus(order.id, 'CANCELLED')}
+                            >
+                              Cancel
+                            </Button>
+                          </>
                         )}
                         {order.status === 'ACCEPTED' && (
-                          <Button 
-                            variant="primary" 
-                            size="sm"
-                            onClick={() => handleUpdateOrderStatus(order.id, 'PREPARING')}
-                          >
-                            Start Preparing
-                          </Button>
+                          <>
+                            <Button 
+                              variant="primary" 
+                              size="sm"
+                              onClick={() => handleUpdateOrderStatus(order.id, 'PREPARING')}
+                            >
+                              Start Preparing
+                            </Button>
+                            <Button 
+                              variant="ghost" 
+                              size="sm"
+                              className="text-rose-600 hover:bg-rose-50"
+                              onClick={() => handleUpdateOrderStatus(order.id, 'CANCELLED')}
+                            >
+                              Cancel
+                            </Button>
+                          </>
                         )}
                         {order.status === 'PREPARING' && (
                           <Button 
@@ -303,23 +529,32 @@ export default function RestaurantPage() {
       {/* Add Item Modal */}
       <Modal
         isOpen={isAddItemOpen}
-        onClose={() => setIsAddItemOpen(false)}
+        onClose={() => !isSubmittingItem && setIsAddItemOpen(false)}
         title="Add New Dish to Menu"
         size="md"
         footer={
           <div className="flex justify-end gap-2 w-full">
-            <Button variant="outline" onClick={() => setIsAddItemOpen(false)}>Cancel</Button>
-            <Button variant="primary" onClick={handleCreateItem}>Add Dish</Button>
+            <Button variant="outline" onClick={() => setIsAddItemOpen(false)} disabled={isSubmittingItem}>Cancel</Button>
+            <Button variant="primary" onClick={handleCreateItem} disabled={isSubmittingItem}>
+              {isSubmittingItem ? 'Saving...' : 'Add Dish'}
+            </Button>
           </div>
         }
       >
-        <form className="space-y-3">
+        <form className="space-y-3" onSubmit={handleCreateItem}>
+          {itemError && (
+            <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2 text-xs text-red-700">
+              <span className="font-bold">Error:</span>
+              <span>{itemError}</span>
+            </div>
+          )}
           <Input
             label="Dish Name"
             required
             placeholder="e.g. Tandoori Paneer Tikka"
             value={newItem.name}
             onChange={e => setNewItem({ ...newItem, name: e.target.value })}
+            disabled={isSubmittingItem}
           />
           <div className="grid grid-cols-2 gap-3">
             <Select
@@ -327,12 +562,14 @@ export default function RestaurantPage() {
               value={newItem.category_id}
               onChange={e => setNewItem({ ...newItem, category_id: e.target.value })}
               options={categories.map(c => ({ value: c.id, label: c.name }))}
+              disabled={isSubmittingItem}
             />
             <Input
               label="Price (₹)"
               type="number"
               value={newItem.price}
               onChange={e => setNewItem({ ...newItem, price: Number(e.target.value) })}
+              disabled={isSubmittingItem}
             />
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -340,6 +577,7 @@ export default function RestaurantPage() {
               label="Dietary Classification"
               value={newItem.is_veg ? 'VEG' : 'NON_VEG'}
               onChange={e => setNewItem({ ...newItem, is_veg: e.target.value === 'VEG' })}
+              disabled={isSubmittingItem}
               options={[
                 { value: 'VEG', label: 'Vegetarian (Green)' },
                 { value: 'NON_VEG', label: 'Non-Vegetarian (Red)' },
@@ -350,6 +588,7 @@ export default function RestaurantPage() {
               type="number"
               value={newItem.preparation_time_minutes}
               onChange={e => setNewItem({ ...newItem, preparation_time_minutes: Number(e.target.value) })}
+              disabled={isSubmittingItem}
             />
           </div>
           <Input
@@ -357,6 +596,82 @@ export default function RestaurantPage() {
             placeholder="Key ingredients, spices, and preparation style"
             value={newItem.description}
             onChange={e => setNewItem({ ...newItem, description: e.target.value })}
+            disabled={isSubmittingItem}
+          />
+        </form>
+      </Modal>
+
+      {/* Edit Item Modal */}
+      <Modal
+        isOpen={isEditItemOpen}
+        onClose={() => !isSubmittingItem && setIsEditItemOpen(false)}
+        title={editingItem ? `Edit Dish: ${editingItem.name}` : 'Edit Dish'}
+        size="md"
+        footer={
+          <div className="flex justify-end gap-2 w-full">
+            <Button variant="outline" onClick={() => setIsEditItemOpen(false)} disabled={isSubmittingItem}>Cancel</Button>
+            <Button variant="primary" onClick={handleUpdateItem} disabled={isSubmittingItem}>
+              {isSubmittingItem ? 'Updating...' : 'Update Dish'}
+            </Button>
+          </div>
+        }
+      >
+        <form className="space-y-3" onSubmit={handleUpdateItem}>
+          {itemError && (
+            <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2 text-xs text-red-700">
+              <span className="font-bold">Error:</span>
+              <span>{itemError}</span>
+            </div>
+          )}
+          <Input
+            label="Dish Name"
+            required
+            placeholder="e.g. Tandoori Paneer Tikka"
+            value={editItemForm.name}
+            onChange={e => setEditItemForm({ ...editItemForm, name: e.target.value })}
+            disabled={isSubmittingItem}
+          />
+          <div className="grid grid-cols-2 gap-3">
+            <Select
+              label="Menu Category"
+              value={editItemForm.category_id}
+              onChange={e => setEditItemForm({ ...editItemForm, category_id: e.target.value })}
+              options={categories.map(c => ({ value: c.id, label: c.name }))}
+              disabled={isSubmittingItem}
+            />
+            <Input
+              label="Price (₹)"
+              type="number"
+              value={editItemForm.price}
+              onChange={e => setEditItemForm({ ...editItemForm, price: Number(e.target.value) })}
+              disabled={isSubmittingItem}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Select
+              label="Dietary Classification"
+              value={editItemForm.is_veg ? 'VEG' : 'NON_VEG'}
+              onChange={e => setEditItemForm({ ...editItemForm, is_veg: e.target.value === 'VEG' })}
+              disabled={isSubmittingItem}
+              options={[
+                { value: 'VEG', label: 'Vegetarian (Green)' },
+                { value: 'NON_VEG', label: 'Non-Vegetarian (Red)' },
+              ]}
+            />
+            <Input
+              label="Prep Duration (Mins)"
+              type="number"
+              value={editItemForm.preparation_time_minutes}
+              onChange={e => setEditItemForm({ ...editItemForm, preparation_time_minutes: Number(e.target.value) })}
+              disabled={isSubmittingItem}
+            />
+          </div>
+          <Input
+            label="Dish Description"
+            placeholder="Key ingredients, spices, and preparation style"
+            value={editItemForm.description}
+            onChange={e => setEditItemForm({ ...editItemForm, description: e.target.value })}
+            disabled={isSubmittingItem}
           />
         </form>
       </Modal>

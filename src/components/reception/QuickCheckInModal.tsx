@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Check, 
   CheckCircle2, 
@@ -22,7 +22,7 @@ import {
   activityLogService 
 } from '../../services/demoDataService';
 import type { Reservation, Room, PaymentMethod } from '../../types';
-import { Modal, Button, Input, Select, RoomStatusBadge, HousekeepingBadge } from '../ui';
+import { Modal, Button, Input, Select, RoomStatusBadge, HousekeepingBadge, useToast } from '../ui';
 
 export interface QuickCheckInModalProps {
   isOpen: boolean;
@@ -69,12 +69,20 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
   const [paymentRef, setPaymentRef] = useState<string>('');
   const [isDepositWaived, setIsDepositWaived] = useState<boolean>(false);
 
-  // Success state
+  // Success & Error & Pending Mutation states
   const [isCompleted, setIsCompleted] = useState(false);
   const [completedRoom, setCompletedRoom] = useState<Room | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const createdWalkInResRef = useRef<Reservation | null>(null);
+  const toast = useToast();
 
   // Synchronize state when modal opens or reservation changes
   useEffect(() => {
+    createdWalkInResRef.current = null;
+    setSubmitError(null);
+    setIsSubmitting(false);
+
     if (reservation) {
       setActiveRes(reservation);
       if (reservation.room_id) {
@@ -163,142 +171,169 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
     if (step > 1) setStep((step - 1) as any);
   };
 
-  const handleCompleteCheckIn = () => {
-    if (!selectedRoomId) return;
+  const handleCompleteCheckIn = async () => {
+    if (!selectedRoomId || isSubmitting) return;
 
     let resToUse = activeRes;
     const roomToAssign = rooms.find(r => r.id === selectedRoomId);
     if (!roomToAssign) return;
 
-    // 1. If no existing reservation (walk-in from Room Board), create one on the fly
-    if (!resToUse) {
-      let guestId = '';
-      const existingGuest = allGuests.find(g => g.phone === guestForm.phone);
-      if (existingGuest) {
-        guestId = existingGuest.id;
-        guestService.update(guestId, {
-          id_type: guestForm.idType as any,
-          id_number: guestForm.idNumber,
-        });
+    setIsSubmitting(true);
+    setSubmitError(null);
+
+    try {
+      // 1. If no existing reservation (walk-in from Room Board), create one on the fly (or reuse already created one if retrying)
+      if (!resToUse) {
+        if (createdWalkInResRef.current) {
+          resToUse = createdWalkInResRef.current;
+        } else {
+          let guestId = '';
+          const existingGuest = allGuests.find(g => g.phone === guestForm.phone);
+          if (existingGuest) {
+            guestId = existingGuest.id;
+            guestService.update(guestId, {
+              id_type: guestForm.idType as any,
+              id_number: guestForm.idNumber,
+            });
+          } else {
+            const newGuest = guestService.create({
+              hotel_id: hotelId,
+              first_name: guestForm.firstName,
+              last_name: guestForm.lastName,
+              phone: guestForm.phone,
+              email: guestForm.email,
+              id_type: guestForm.idType as any,
+              id_number: guestForm.idNumber,
+              vip_status: false,
+            });
+            guestId = newGuest.id;
+          }
+
+          const todayStr = new Date().toISOString().split('T')[0];
+          const tomorrowStr = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+          const rate = targetRoomType?.base_rate || 4500;
+          const subtotal = rate;
+          const tax = Math.round(subtotal * 0.18);
+
+          resToUse = await reservationService.createAsync({
+            hotel_id: hotelId,
+            guest_id: guestId,
+            room_type_id: roomToAssign.room_type_id,
+            status: 'CONFIRMED',
+            source: 'WALK_IN',
+            check_in_date: todayStr,
+            check_out_date: tomorrowStr,
+            adults: 2,
+            children: 0,
+            nights: 1,
+            rate_per_night: rate,
+            total_amount: subtotal + tax,
+            tax_amount: tax,
+            discount_amount: 0,
+            deposit_amount: isDepositWaived ? 0 : depositAmount,
+          });
+          createdWalkInResRef.current = resToUse;
+        }
       } else {
-        const newGuest = guestService.create({
-          hotel_id: hotelId,
-          first_name: guestForm.firstName,
-          last_name: guestForm.lastName,
-          phone: guestForm.phone,
-          email: guestForm.email,
-          id_type: guestForm.idType as any,
-          id_number: guestForm.idNumber,
-          vip_status: false,
-        });
-        guestId = newGuest.id;
+        // Update existing guest identity details
+        if (resToUse.guest_id) {
+          guestService.update(resToUse.guest_id, {
+            first_name: guestForm.firstName,
+            last_name: guestForm.lastName,
+            phone: guestForm.phone,
+            email: guestForm.email,
+            id_type: guestForm.idType as any,
+            id_number: guestForm.idNumber,
+          });
+        }
       }
 
-      const todayStr = new Date().toISOString().split('T')[0];
-      const tomorrowStr = new Date(Date.now() + 86400000).toISOString().split('T')[0];
-      const rate = targetRoomType?.base_rate || 4500;
-      const subtotal = rate;
-      const tax = Math.round(subtotal * 0.18);
+      // 2. Perform Check-In
+      const checkedInRes = await reservationService.checkInAsync(resToUse.id, selectedRoomId);
+      if (!checkedInRes) {
+        throw new Error('Check-in was rejected by the database. Room could not be assigned.');
+      }
 
-      resToUse = reservationService.create({
+      // 3. Setup Folio & Post Stay Charges & Advance Deposit
+      const folio = folioService.getByReservation(checkedInRes.id);
+      if (folio) {
+        // Ensure room stay charge is on folio
+        const folioItems = folioService.getItems(folio.id);
+        const hasRoomCharge = folioItems.some(i => i.category === 'ROOM');
+        if (!hasRoomCharge) {
+          const roomChargeTotal = checkedInRes.total_amount;
+          const taxAmount = checkedInRes.tax_amount || Math.round(roomChargeTotal * 0.18);
+          await folioService.addItemAsync({
+            hotel_id: hotelId,
+            folio_id: folio.id,
+            description: `Accommodation: Room ${roomToAssign.number} (${checkedInRes.nights} Nights)`,
+            category: 'ROOM',
+            quantity: checkedInRes.nights || 1,
+            unit_price: checkedInRes.rate_per_night,
+            tax_percent: 18,
+            tax_amount: taxAmount,
+            discount_amount: 0,
+            total: roomChargeTotal,
+            posted_at: new Date().toISOString(),
+            posted_by: user?.full_name || 'Front Desk',
+          });
+        }
+
+        // 4. Record Deposit Payment if collected
+        if (!isDepositWaived && depositAmount > 0) {
+          try {
+            await folioService.addPaymentAsync({
+              hotel_id: hotelId,
+              folio_id: folio.id,
+              guest_id: checkedInRes.guest_id,
+              reservation_id: checkedInRes.id,
+              amount: Number(depositAmount),
+              method: paymentMethod,
+              reference: paymentRef || `DEP-${Date.now().toString().slice(-6)}`,
+              notes: `Advance security deposit collected at check-in (${paymentMethod})`,
+              received_by: user?.full_name || 'Front Desk',
+            });
+
+            await reservationService.updateAsync(checkedInRes.id, {
+              deposit_amount: (checkedInRes.deposit_amount || 0) + Number(depositAmount),
+            });
+          } catch (payErr: any) {
+            // Document partial failure in compound workflow:
+            // Walk-in reservation and room check-in have committed, but payment collection failed.
+            console.error('Check-in partial failure (deposit rejected):', payErr);
+            throw new Error(`Guest was checked in to Room ${roomToAssign.number}, but deposit payment failed to confirm (${payErr?.message || 'Database error'}). Please collect deposit manually in Folios.`);
+          }
+        }
+      }
+
+      // 5. Audit Logging
+      activityLogService.log({
         hotel_id: hotelId,
-        guest_id: guestId,
-        room_type_id: roomToAssign.room_type_id,
-        status: 'CONFIRMED',
-        source: 'WALK_IN',
-        check_in_date: todayStr,
-        check_out_date: tomorrowStr,
-        adults: 2,
-        children: 0,
-        nights: 1,
-        rate_per_night: rate,
-        total_amount: subtotal + tax,
-        tax_amount: tax,
-        discount_amount: 0,
-        deposit_amount: isDepositWaived ? 0 : depositAmount,
+        user_id: user?.id,
+        actor_name: user?.full_name || 'Front Desk Receptionist',
+        action: 'CHECK_IN',
+        entity_type: 'reservation',
+        entity_id: checkedInRes.id,
+        metadata: {
+          guest: `${guestForm.firstName} ${guestForm.lastName}`,
+          room_number: roomToAssign.number,
+          deposit_collected: isDepositWaived ? 0 : depositAmount,
+          is_upgrade: isUpgradedRoom,
+        },
       });
-    } else {
-      // Update existing guest identity details
-      if (resToUse.guest_id) {
-        guestService.update(resToUse.guest_id, {
-          first_name: guestForm.firstName,
-          last_name: guestForm.lastName,
-          phone: guestForm.phone,
-          email: guestForm.email,
-          id_type: guestForm.idType as any,
-          id_number: guestForm.idNumber,
-        });
-      }
+
+      setCompletedRoom(roomToAssign);
+      setIsCompleted(true);
+      toast.success('Check-in complete', `Room ${roomToAssign.number} is now OCCUPIED`);
+      onSuccess(checkedInRes, roomToAssign);
+    } catch (err: any) {
+      console.error('Check-in workflow failed:', err);
+      const msg = err?.message || 'Check-in failed due to database write rejection. Please try again.';
+      setSubmitError(msg);
+      toast.error('Check-in failed', msg);
+    } finally {
+      setIsSubmitting(false);
     }
-
-    // 2. Perform Check-In
-    const checkedInRes = reservationService.checkIn(resToUse.id, selectedRoomId);
-    if (!checkedInRes) return;
-
-    // 3. Setup Folio & Post Stay Charges & Advance Deposit
-    const folio = folioService.getByReservation(checkedInRes.id);
-    if (folio) {
-      // Ensure room stay charge is on folio
-      const folioItems = folioService.getItems(folio.id);
-      const hasRoomCharge = folioItems.some(i => i.category === 'ROOM');
-      if (!hasRoomCharge) {
-        const roomChargeTotal = checkedInRes.total_amount;
-        const taxAmount = checkedInRes.tax_amount || Math.round(roomChargeTotal * 0.18);
-        folioService.addItem({
-          hotel_id: hotelId,
-          folio_id: folio.id,
-          description: `Accommodation: Room ${roomToAssign.number} (${checkedInRes.nights} Nights)`,
-          category: 'ROOM',
-          quantity: checkedInRes.nights || 1,
-          unit_price: checkedInRes.rate_per_night,
-          tax_percent: 18,
-          tax_amount: taxAmount,
-          discount_amount: 0,
-          total: roomChargeTotal,
-          posted_at: new Date().toISOString(),
-          posted_by: user?.full_name || 'Front Desk',
-        });
-      }
-
-      // 4. Record Deposit Payment if collected
-      if (!isDepositWaived && depositAmount > 0) {
-        folioService.addPayment({
-          hotel_id: hotelId,
-          folio_id: folio.id,
-          guest_id: checkedInRes.guest_id,
-          reservation_id: checkedInRes.id,
-          amount: Number(depositAmount),
-          method: paymentMethod,
-          reference: paymentRef || `DEP-${Date.now().toString().slice(-6)}`,
-          notes: `Advance security deposit collected at check-in (${paymentMethod})`,
-          received_by: user?.full_name || 'Front Desk',
-        });
-
-        reservationService.update(checkedInRes.id, {
-          deposit_amount: (checkedInRes.deposit_amount || 0) + Number(depositAmount),
-        });
-      }
-    }
-
-    // 5. Audit Logging
-    activityLogService.log({
-      hotel_id: hotelId,
-      user_id: user?.id,
-      actor_name: user?.full_name || 'Front Desk Receptionist',
-      action: 'CHECK_IN',
-      entity_type: 'reservation',
-      entity_id: checkedInRes.id,
-      metadata: {
-        guest: `${guestForm.firstName} ${guestForm.lastName}`,
-        room_number: roomToAssign.number,
-        deposit_collected: isDepositWaived ? 0 : depositAmount,
-        is_upgrade: isUpgradedRoom,
-      },
-    });
-
-    setCompletedRoom(roomToAssign);
-    setIsCompleted(true);
-    onSuccess(checkedInRes, roomToAssign);
   };
 
   return (
@@ -338,11 +373,11 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
                 <Button 
                   variant="primary" 
                   onClick={handleCompleteCheckIn}
-                  disabled={!selectedRoomId}
+                  disabled={!selectedRoomId || isSubmitting}
                   className="bg-emerald-700 hover:bg-emerald-800 text-white"
                   iconLeft={<CheckCircle2 className="w-4 h-4" />}
                 >
-                  Complete Check-In & Issue Key
+                  {isSubmitting ? 'Checking in...' : 'Complete Check-In & Issue Key'}
                 </Button>
               )}
             </>
@@ -598,6 +633,15 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
           {/* STEP 3: ADVANCE DEPOSIT & COMPLETE */}
           {step === 3 && (
             <div className="space-y-4 animate-in fade-in">
+              {submitError && (
+                <div className="p-3.5 bg-red-50 border border-red-200 rounded-xl flex items-start gap-2.5 text-xs text-red-700">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-red-600 mt-0.5" />
+                  <div>
+                    <strong className="block font-semibold">Check-In Mutation Error</strong>
+                    <span className="leading-relaxed">{submitError}</span>
+                  </div>
+                </div>
+              )}
               <div className="p-4 rounded-xl bg-stone-900 text-white space-y-2 text-xs">
                 <div className="flex justify-between">
                   <span className="text-stone-400">Guest:</span>

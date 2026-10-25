@@ -9,26 +9,55 @@ import {
   ExternalLink,
   Eye,
   ShieldCheck,
-  Building2
+  Building2,
+  Loader2
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { useAuth } from '../../contexts/AuthContext';
-import { qrService, roomService, hotelService } from '../../services/demoDataService';
+import { qrService, roomService, hotelService, demoDataService } from '../../services/demoDataService';
+import { isDemoMode, isSupabaseConfigured } from '../../lib/supabase';
 import { generateGuestPortalUrl } from '../../utils/qrCode';
 import type { QRCode as QRCodeType, Room } from '../../types';
-import { Card, CardContent, CardHeader, Button, Badge, Modal } from '../../components/ui';
+import { Card, CardContent, CardHeader, Button, Badge, Modal, useToast } from '../../components/ui';
 
 export default function QRCodesPage() {
   const { user } = useAuth();
+  const toast = useToast();
   const hotelId = user?.hotel_id || 'hotel-001';
   const hotel = hotelService.getById(hotelId);
 
   const [qrCodes, setQrCodes] = useState<QRCodeType[]>(() => qrService.getAll(hotelId));
-  const [rooms] = useState(() => roomService.getAll(hotelId));
+  const [rooms, setRooms] = useState(() => roomService.getAll(hotelId));
   const [previewQr, setPreviewQr] = useState<QRCodeType | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [isPrintSheetOpen, setIsPrintSheetOpen] = useState(false);
   const [bulkQrUrls, setBulkQrUrls] = useState<{ [roomId: string]: string }>({});
+
+  const [isLoading, setIsLoading] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [actionRoomId, setActionRoomId] = useState<string | null>(null);
+
+  // Sync rooms and QR codes from Supabase on mount
+  useEffect(() => {
+    let isMounted = true;
+    async function syncData() {
+      setIsLoading(true);
+      if (!isDemoMode() && isSupabaseConfigured()) {
+        try {
+          await demoDataService.syncFromSupabase(hotelId);
+        } catch (e) {
+          console.warn('[QRCodesPage] Error syncing hotel data:', e);
+        }
+      }
+      if (isMounted) {
+        setRooms([...roomService.getAll(hotelId)]);
+        setQrCodes([...qrService.getAll(hotelId)]);
+        setIsLoading(false);
+      }
+    }
+    syncData();
+    return () => { isMounted = false; };
+  }, [hotelId]);
 
   // Generate QR data URL when preview opens
   useEffect(() => {
@@ -56,27 +85,65 @@ export default function QRCodesPage() {
     }
   }, [isPrintSheetOpen, rooms, qrCodes]);
 
-  const handleGenerateAll = () => {
-    // Generate QR for rooms that don't have an active one
-    rooms.forEach(room => {
-      const hasQr = qrCodes.some(q => q.room_id === room.id && q.is_active);
-      if (!hasQr) {
-        qrService.generate(hotelId, room.id);
+  const handleGenerateAll = async () => {
+    if (isGenerating) return;
+    setIsGenerating(true);
+    try {
+      for (const room of rooms) {
+        const hasQr = qrCodes.some(q => q.room_id === room.id && q.is_active);
+        if (!hasQr) {
+          await qrService.generateAsync(hotelId, room.id);
+        }
       }
-    });
-    setQrCodes([...qrService.getAll(hotelId)]);
+      setQrCodes([...qrService.getAll(hotelId)]);
+      toast.success('QR generation complete', 'All rooms now have active digital standees');
+    } catch (err: any) {
+      toast.error('Failed to generate QRs', err?.message || 'Database write error');
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
-  const handleDeactivate = (id: string) => {
-    qrService.deactivate(id);
-    setQrCodes([...qrService.getAll(hotelId)]);
+  const handleCreateSingle = async (roomId: string) => {
+    if (actionRoomId) return;
+    setActionRoomId(roomId);
+    try {
+      await qrService.generateAsync(hotelId, roomId);
+      setQrCodes([...qrService.getAll(hotelId)]);
+      toast.success('QR code generated', 'Room QR standee token saved');
+    } catch (err: any) {
+      toast.error('Failed to create QR', err?.message || 'Database write error');
+    } finally {
+      setActionRoomId(null);
+    }
   };
 
-  const handleRegenerate = (roomId: string) => {
-    const existing = qrCodes.find(q => q.room_id === roomId && q.is_active);
-    if (existing) qrService.deactivate(existing.id);
-    qrService.generate(hotelId, roomId);
-    setQrCodes([...qrService.getAll(hotelId)]);
+  const handleDeactivate = async (id: string) => {
+    try {
+      await qrService.deactivateAsync(id);
+      setQrCodes([...qrService.getAll(hotelId)]);
+      toast.success('QR deactivated', 'Room access token revoked');
+    } catch (err: any) {
+      toast.error('Failed to deactivate QR', err?.message || 'Database write error');
+    }
+  };
+
+  const handleRegenerate = async (roomId: string) => {
+    if (actionRoomId) return;
+    setActionRoomId(roomId);
+    try {
+      const existing = qrCodes.find(q => q.room_id === roomId && q.is_active);
+      if (existing) {
+        await qrService.deactivateAsync(existing.id);
+      }
+      await qrService.generateAsync(hotelId, roomId);
+      setQrCodes([...qrService.getAll(hotelId)]);
+      toast.success('QR code regenerated', 'Old token revoked and new standee URL active');
+    } catch (err: any) {
+      toast.error('Failed to regenerate QR', err?.message || 'Database write error');
+    } finally {
+      setActionRoomId(null);
+    }
   };
 
   const handleDownloadPng = (qr: QRCodeType) => {
@@ -109,9 +176,10 @@ export default function QRCodesPage() {
           <Button 
             variant="primary" 
             onClick={handleGenerateAll}
-            iconLeft={<Plus className="w-4 h-4" />}
+            disabled={isGenerating}
+            iconLeft={isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
           >
-            Generate Missing QRs
+            {isGenerating ? 'Generating...' : 'Generate Missing QRs'}
           </Button>
         </div>
       </div>
@@ -189,21 +257,20 @@ export default function QRCodesPage() {
                             <Button 
                               variant="ghost" 
                               size="sm"
+                              disabled={actionRoomId === room.id}
                               onClick={() => handleRegenerate(room.id)}
                             >
-                              Regenerate
+                              {actionRoomId === room.id ? 'Regenerating...' : 'Regenerate'}
                             </Button>
                           </>
                         ) : (
                           <Button 
                             variant="primary" 
                             size="sm"
-                            onClick={() => {
-                              qrService.generate(hotelId, room.id);
-                              setQrCodes([...qrService.getAll(hotelId)]);
-                            }}
+                            disabled={actionRoomId === room.id}
+                            onClick={() => handleCreateSingle(room.id)}
                           >
-                            Create QR
+                            {actionRoomId === room.id ? 'Creating...' : 'Create QR'}
                           </Button>
                         )}
                       </td>

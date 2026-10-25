@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { 
   Building2, 
   Wifi, 
@@ -32,9 +32,10 @@ import {
   menuService, 
   orderService, 
   serviceRequestService, 
-  folioService 
+  folioService,
+  reloadDemoStoreFromStorage
 } from '../../services/demoDataService';
-import { supabase, isSupabaseConfigured } from '../../lib/supabase';
+import { supabase, isSupabaseConfigured, isDemoMode } from '../../lib/supabase';
 import { realtimeSync } from '../../services/realtimeSync';
 import { paymentService } from '../../services/paymentService';
 import type { 
@@ -61,7 +62,8 @@ interface ChatMessage {
 
 export default function GuestPortalPage() {
   const params = useParams();
-  const rawToken = params.token || params['*'] || '';
+  const [searchParams] = useSearchParams();
+  const rawToken = params.token || params['*'] || searchParams.get('token') || searchParams.get('room') || '';
   const token = rawToken.replace(/^\/+|\/+$/g, '').trim();
 
   const [isLoading, setIsLoading] = useState(true);
@@ -115,153 +117,165 @@ export default function GuestPortalPage() {
   const [chatInput, setChatInput] = useState('');
 
   useEffect(() => {
+    let isMounted = true;
     setIsLoading(true);
     setError(null);
 
-    // 1. Resolve primary hotel
-    const allHotels = hotelService.getAll();
-    let resolvedHotel: Hotel | undefined = hotelService.getById('hotel-001') || allHotels[0];
-    let resolvedRoom: Room | null = null;
-
-    // Direct Supabase query to fetch real room state when Supabase is configured
-    if (token && isSupabaseConfigured() && supabase) {
-      (async () => {
+    async function resolveSession() {
+      // 1. Secure Supabase session resolution via RPC when Supabase is configured
+      if (token && isSupabaseConfigured() && supabase) {
         try {
-          const { data: qr } = await supabase
-            .from('qr_codes')
-            .select('*, room:rooms(*), hotel:hotels(*)')
-            .eq('token', token)
-            .maybeSingle();
-
-          if (qr && qr.room) {
-            setRoom(qr.room);
-            if (qr.hotel) setHotel(qr.hotel);
-          } else {
-            const { data: dbRooms } = await supabase
-              .from('rooms')
-              .select('*, hotel:hotels(*)')
-              .or(`number.eq.${token},id.eq.${token}`)
-              .limit(1);
-
-            if (dbRooms && dbRooms.length > 0) {
-              setRoom(dbRooms[0]);
-              if (dbRooms[0].hotel) setHotel(dbRooms[0].hotel);
+          const { data: sessionData, error: sessionErr } = await supabase.rpc('resolve_guest_portal_session', { p_token: token });
+          if (sessionErr) {
+            if (!isMounted) return;
+            const errMsg = sessionErr.message || '';
+            if (errMsg.includes('INVALID_QR_TOKEN') || errMsg.includes('deactivated')) {
+              setError('This QR code is not recognized or has been deactivated. Please contact the front desk for assistance.');
+            } else if (errMsg.includes('HOTEL_INACTIVE')) {
+              setError('This hotel is currently inactive. Please contact the front desk.');
+            } else {
+              setError('Unable to resolve guest session from QR token. Please contact front desk.');
             }
+            setIsLoading(false);
+            return;
+          }
+
+          if (sessionData && isMounted) {
+            if (sessionData.hotel) setHotel(sessionData.hotel);
+            if (sessionData.room) setRoom(sessionData.room);
+            setReservation(sessionData.reservation || null);
+            setGuest(sessionData.guest || null);
+            setDemoNotice(null);
+            setIsLoading(false);
+            return;
           }
         } catch (dbErr) {
-          console.warn('[GuestPortal] Supabase direct room fetch:', dbErr);
-        }
-      })();
-    }
-
-    // 2. Resilient token & room resolution
-    if (token) {
-      // 2A. Exact QR token lookup via qrService
-      const qrMatch = qrService.getByToken(token);
-      if (qrMatch) {
-        if (qrMatch.hotel) resolvedHotel = qrMatch.hotel;
-        if (qrMatch.room) resolvedRoom = qrMatch.room;
-      }
-
-      // 2B. Direct roomId or roomNumber matching
-      if (!resolvedRoom) {
-        for (const h of allHotels) {
-          const hRooms = roomService.getAll(h.id);
-          const matched = hRooms.find(r => 
-            r.id === token || 
-            r.number.toLowerCase() === token.toLowerCase() ||
-            r.number.replace(/\D/g, '') === token.replace(/\D/g, '') ||
-            token.toLowerCase().includes(`r${r.number.toLowerCase()}`) ||
-            token.toLowerCase().includes(r.number.toLowerCase())
-          );
-          if (matched) {
-            resolvedRoom = matched;
-            resolvedHotel = h;
-            break;
+          console.warn('[GuestPortal] Supabase session resolve error:', dbErr);
+          if (!isDemoMode()) {
+            if (isMounted) {
+              setError('Network error resolving guest session. Please refresh or contact front desk.');
+              setIsLoading(false);
+            }
+            return;
           }
         }
       }
 
-      // 2C. QR table room_id or token matching
-      if (!resolvedRoom) {
-        for (const h of allHotels) {
-          const qrs = qrService.getAll(h.id);
-          const matchedQr = qrs.find(q => 
-            q.token.toLowerCase() === token.toLowerCase() ||
-            q.room_id === token ||
-            q.id === token
-          );
-          if (matchedQr && matchedQr.room) {
-            resolvedRoom = matchedQr.room;
-            resolvedHotel = h;
-            break;
+      if (!isMounted) return;
+
+      // 2. Resilient demo / in-memory token & room resolution
+      const allHotels = hotelService.getAll();
+      let resolvedHotel: Hotel | undefined = hotelService.getById('hotel-001') || allHotels[0];
+      let resolvedRoom: Room | null = null;
+
+      if (token) {
+        // 2A. Token lookup via qrService (checking both active and deactivated tokens)
+        const qrMatch = qrService.findByToken(token);
+        if (qrMatch) {
+          if (!qrMatch.is_active) {
+            setError('This QR code has been deactivated. Please contact the front desk for assistance.');
+            setIsLoading(false);
+            return;
+          }
+          if (qrMatch.hotel) resolvedHotel = qrMatch.hotel;
+          if (qrMatch.room) resolvedRoom = qrMatch.room;
+        }
+
+        // 2B. Direct roomId or roomNumber matching (e.g. testing with /guest?room=101 or token=101 or token=qr-token-101)
+        if (!resolvedRoom) {
+          for (const h of allHotels) {
+            const hRooms = roomService.getAll(h.id);
+            const matched = hRooms.find(r => 
+              r.id === token || 
+              r.number.toLowerCase() === token.toLowerCase() ||
+              `qr-token-${r.number.toLowerCase()}` === token.toLowerCase() ||
+              `token-${r.number.toLowerCase()}` === token.toLowerCase()
+            );
+            if (matched) {
+              resolvedRoom = matched;
+              resolvedHotel = h;
+              break;
+            }
           }
         }
+
+        // If token was provided but no valid QR or room was found, fail closed!
+        if (!resolvedRoom) {
+          setError('Invalid or unrecognized QR token. Please verify your code or contact front desk.');
+          setIsLoading(false);
+          return;
+        }
+
+        setDemoNotice(null);
+      } else {
+        // 3. Fallback for bare demo preview (no token provided in URL)
+        if (resolvedHotel) {
+          const hotelRooms = roomService.getAll(resolvedHotel.id);
+          resolvedRoom = 
+            hotelRooms.find(r => r.number === '101') || 
+            hotelRooms.find(r => r.status === 'AVAILABLE' && r.housekeeping_status === 'CLEAN') || 
+            hotelRooms[0] || 
+            null;
+        }
+        setDemoNotice('You are viewing an interactive guest portal demo (Room 101).');
       }
-    }
 
-    // 3. FALLBACK GUARANTEE:
-    // If no matching room is found for the given token, DO NOT throw a 404 or blank screen.
-    // Automatically assign and display the first available clean room (e.g. Room 101).
-    if (!resolvedRoom && resolvedHotel) {
-      const hotelRooms = roomService.getAll(resolvedHotel.id);
-      resolvedRoom = 
-        hotelRooms.find(r => r.number === '101') || 
-        hotelRooms.find(r => r.status === 'AVAILABLE' && r.housekeeping_status === 'CLEAN') || 
-        hotelRooms[0] || 
-        null;
-    }
+      if (!resolvedHotel || !resolvedRoom) {
+        setError('Unable to load demo room session. Please refresh.');
+        setIsLoading(false);
+        return;
+      }
 
-    if (!resolvedHotel || !resolvedRoom) {
-      setError('Unable to load demo room session. Please refresh.');
+      setHotel(resolvedHotel);
+      setRoom(resolvedRoom);
+
+      // 4. Resolve active reservation, guest, folio (Strict Fail-Closed)
+      const allRes = reservationService.getAll(resolvedHotel.id);
+      const activeRes = allRes.find(r => r.room_id === resolvedRoom!.id && r.status === 'CHECKED_IN');
+
+      if (activeRes) {
+        setReservation(activeRes);
+        if (activeRes.guest) setGuest(activeRes.guest);
+        const f = folioService.getByReservation(activeRes.id);
+        if (f) setFolio(f);
+      } else {
+        setReservation(null);
+        setGuest(null);
+        setFolio(null);
+      }
+
+      // 5. Load menu categories, menu items, and services
+      setCategories(menuService.getCategories(resolvedHotel.id));
+      setMenuItems(menuService.getItems(resolvedHotel.id));
+      setServices(serviceRequestService.getServices(resolvedHotel.id));
+
+      // 6. Load orders and requests for this active reservation only
+      if (activeRes) {
+        const allOrders = orderService.getAll(resolvedHotel.id);
+        setMyOrders(allOrders.filter(o => o.room_id === resolvedRoom!.id && o.reservation_id === activeRes.id));
+
+        const allRequests = serviceRequestService.getAll(resolvedHotel.id);
+        setMyRequests(allRequests.filter(r => r.room_id === resolvedRoom!.id && r.reservation_id === activeRes.id));
+      } else {
+        setMyOrders([]);
+        setMyRequests([]);
+      }
+
       setIsLoading(false);
-      return;
     }
 
-    setHotel(resolvedHotel);
-    setRoom(resolvedRoom);
+    resolveSession();
 
-    // Connected to valid room: remove demo notice banner
-    setDemoNotice(null);
-
-    // 4. Resolve active reservation, guest, folio
-    const allRes = reservationService.getAll(resolvedHotel.id);
-    const activeRes = allRes.find(r => r.room_id === resolvedRoom!.id && r.status === 'CHECKED_IN');
-
-    if (activeRes) {
-      setReservation(activeRes);
-      if (activeRes.guest) setGuest(activeRes.guest);
-      const f = folioService.getByReservation(activeRes.id);
-      if (f) setFolio(f);
-    } else {
-      // Default to guest session for demo interaction
-      const sampleRes = allRes.find(r => r.room_id === resolvedRoom!.id) || allRes[0];
-      if (sampleRes && sampleRes.guest) {
-        setGuest(sampleRes.guest);
-      }
-    }
-
-    // 5. Load menu categories, menu items, and services
-    setCategories(menuService.getCategories(resolvedHotel.id));
-    setMenuItems(menuService.getItems(resolvedHotel.id));
-    setServices(serviceRequestService.getServices(resolvedHotel.id));
-
-    // 6. Load orders and requests for this room
-    const allOrders = orderService.getAll(resolvedHotel.id);
-    setMyOrders(allOrders.filter(o => o.room_id === resolvedRoom!.id));
-
-    const allRequests = serviceRequestService.getAll(resolvedHotel.id);
-    setMyRequests(allRequests.filter(r => r.room_id === resolvedRoom!.id));
-
-    setIsLoading(false);
+    return () => {
+      isMounted = false;
+    };
   }, [token]);
 
   // Realtime Status Synchronization for Guest Portal
   useEffect(() => {
     if (!hotel) return;
 
-    const disconnectSupabase = realtimeSync.connectSupabaseHotelChannel(hotel.id);
-
+    // Listen to local BroadcastChannel and cross-tab storage events
     const unsubOrderStatus = realtimeSync.subscribe('ORDER_STATUS_CHANGED', ({ orderId, status, order }) => {
       setMyOrders(prev =>
         prev.map(o => (o.id === orderId ? { ...o, ...order, status } : o))
@@ -274,18 +288,80 @@ export default function GuestPortalPage() {
       );
     });
 
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'staynexa_demo_store' || e.key === 'staynexa_global_sync') {
+        reloadDemoStoreFromStorage();
+        if (hotel) {
+          setMenuItems(menuService.getItems(hotel.id));
+          setCategories(menuService.getCategories(hotel.id));
+        }
+        if (room && reservation) {
+          const allOrders = orderService.getAll(hotel.id);
+          setMyOrders(allOrders.filter(o => o.room_id === room.id && o.reservation_id === reservation.id));
+          const allRequests = serviceRequestService.getAll(hotel.id);
+          setMyRequests(allRequests.filter(r => r.room_id === room.id && r.reservation_id === reservation.id));
+        }
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+
     return () => {
-      disconnectSupabase();
+      window.removeEventListener('storage', handleStorage);
       unsubOrderStatus();
       unsubRequestStatus();
     };
-  }, [hotel]);
+  }, [hotel, room, reservation]);
+
+  // Authenticated Order & Service Request Status Polling (4s interval) via Tracking Token
+  useEffect(() => {
+    const activeOrders = myOrders.filter(o => !['DELIVERED', 'CANCELLED', 'completed'].includes(o.status));
+    const activeRequests = myRequests.filter(r => !['COMPLETED', 'CANCELLED'].includes(r.status));
+    if (activeOrders.length === 0 && activeRequests.length === 0) return;
+
+    const interval = setInterval(async () => {
+      for (const ord of activeOrders) {
+        const trackingToken = typeof sessionStorage !== 'undefined' 
+          ? sessionStorage.getItem('staynexa_tracking_' + ord.id) 
+          : null;
+        if (trackingToken) {
+          try {
+            const fresh = await orderService.fetchGuestOrderStatus(ord.id, trackingToken);
+            if (fresh && fresh.status && fresh.status !== ord.status) {
+              setMyOrders(prev => prev.map(o => o.id === ord.id ? { ...o, ...fresh, status: fresh.status } : o));
+            }
+          } catch {
+            // Polling silently ignores expired or transient network errors
+          }
+        }
+      }
+
+      for (const req of activeRequests) {
+        const trackingToken = typeof sessionStorage !== 'undefined'
+          ? sessionStorage.getItem('staynexa_req_tracking_' + req.id)
+          : null;
+        if (trackingToken) {
+          try {
+            const fresh = await serviceRequestService.fetchGuestRequestStatus(req.id, trackingToken);
+            if (fresh && fresh.status && fresh.status !== req.status) {
+              setMyRequests(prev => prev.map(r => r.id === req.id ? { ...r, ...fresh, status: fresh.status as any } : r));
+            }
+          } catch {
+            // Polling silently ignores expired or transient network errors
+          }
+        }
+      }
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [myOrders, myRequests]);
 
   const branding = hotel ? hotelService.getBranding(hotel.id) : null;
   const settings = hotel ? hotelService.getSettings(hotel.id) : null;
 
   // Cart operations with precision rounding
   const addToCart = (itemId: string) => {
+    const item = menuItems.find(i => i.id === itemId);
+    if (!item || item.is_available === false) return;
     setCart(prev => ({ ...prev, [itemId]: (prev[itemId] || 0) + 1 }));
   };
 
@@ -314,9 +390,23 @@ export default function GuestPortalPage() {
 
   // Place Food Order
   const handlePlaceOrder = async () => {
-    if (!hotel || cartTotalItems === 0 || isSubmittingOrder) return;
+    if (!hotel || !room || !reservation || !guest) {
+      setOrderErrorMsg('Active checked-in stay required. Please complete check-in at reception before placing orders.');
+      return;
+    }
+    if (cartTotalItems === 0 || isSubmittingOrder) return;
     setIsSubmittingOrder(true);
     setOrderErrorMsg(null);
+
+    // Guard against sold-out items (86'd)
+    for (const [itemId] of Object.entries(cart)) {
+      const item = menuItems.find(i => i.id === itemId);
+      if (!item || item.is_available === false) {
+        setOrderErrorMsg(`Item "${item?.name || 'Selected item'}" is currently sold out.`);
+        setIsSubmittingOrder(false);
+        return;
+      }
+    }
 
     try {
       const items = Object.entries(cart).map(([itemId, qty]) => {
@@ -343,6 +433,7 @@ export default function GuestPortalPage() {
         room_number: room?.number,
         guest_id: guest?.id,
         reservation_id: reservation?.id,
+        token: token || undefined,
         status: 'PENDING',
         type: 'ROOM_SERVICE',
         subtotal: cartSubtotal,
@@ -358,6 +449,11 @@ export default function GuestPortalPage() {
       }
 
       const newOrd = res.order;
+
+      // Save tracking token for secure guest status verification
+      if (res.trackingToken && typeof sessionStorage !== 'undefined') {
+        sessionStorage.setItem('staynexa_tracking_' + newOrd.id, res.trackingToken);
+      }
 
       // If paid via online UPI, immediately record the payment settlement
       if (paymentOption === 'UPI' && folio) {
@@ -397,11 +493,14 @@ export default function GuestPortalPage() {
   };
 
   // Place Service Request
-  const handleCreateRequest = (e: React.FormEvent) => {
+  const handleCreateRequest = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!hotel || !selectedService) return;
+    if (!hotel || !room || !reservation || !guest || !selectedService) {
+      setError('Active checked-in stay required to submit service requests. Please contact the front desk.');
+      return;
+    }
 
-    const req = serviceRequestService.create({
+    const res = await serviceRequestService.submitRequest({
       hotel_id: hotel.id,
       room_id: room?.id,
       guest_id: guest?.id,
@@ -411,13 +510,21 @@ export default function GuestPortalPage() {
       description: requestDesc || `Requested from Room ${room?.number || 'Portal'}`,
       priority: 'MEDIUM',
       status: 'PENDING',
+      token: token || undefined,
     });
 
-    setMyRequests(prev => [req, ...prev]);
-    setSelectedService(null);
-    setRequestDesc('');
-    setRequestSuccess(true);
-    setTimeout(() => setRequestSuccess(false), 3000);
+    if (res.success && res.request) {
+      if (res.trackingToken && typeof sessionStorage !== 'undefined') {
+        sessionStorage.setItem('staynexa_req_tracking_' + res.request.id, res.trackingToken);
+      }
+      setMyRequests(prev => [res.request, ...prev.filter(r => r.id !== res.request.id)]);
+      setSelectedService(null);
+      setRequestDesc('');
+      setRequestSuccess(true);
+      setTimeout(() => setRequestSuccess(false), 3000);
+    } else {
+      setError(res.error || 'Failed to submit service request.');
+    }
   };
 
   // Handle Concierge Chat Send
@@ -435,17 +542,19 @@ export default function GuestPortalPage() {
     setChatMessages(prev => [...prev, newGuestMsg]);
     if (!textToSend) setChatInput('');
 
-    // Automatically create a Service Request for the reception desk
-    serviceRequestService.create({
-      hotel_id: hotel.id,
-      room_id: room?.id,
-      guest_id: guest?.id,
-      reservation_id: reservation?.id,
-      title: `Concierge Chat: ${text.slice(0, 32)}`,
-      description: text,
-      priority: 'MEDIUM',
-      status: 'PENDING',
-    });
+    // Automatically create a Service Request for the reception desk only if guest is active checked-in
+    if (reservation) {
+      serviceRequestService.create({
+        hotel_id: hotel.id,
+        room_id: room?.id,
+        guest_id: guest?.id,
+        reservation_id: reservation?.id,
+        title: `Concierge Chat: ${text.slice(0, 32)}`,
+        description: text,
+        priority: 'MEDIUM',
+        status: 'PENDING',
+      });
+    }
 
     // Simulated desk response
     setTimeout(() => {
@@ -598,6 +707,16 @@ export default function GuestPortalPage() {
             </div>
           )}
         </header>
+
+        {/* Active Stay Requirement Warning */}
+        {!reservation && (
+          <div className="bg-amber-50 border-b border-amber-200 px-4 py-2.5 text-xs text-amber-900 flex items-start gap-2 shadow-xs z-10">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-bold">No Active Stay Checked In:</span> Room service ordering and concierge requests will be unlocked once guest check-in is processed at the reception desk.
+            </div>
+          </div>
+        )}
 
         {/* Global Feedback Banners */}
         {orderSuccessToast && (
@@ -757,7 +876,11 @@ export default function GuestPortalPage() {
 
                       {/* Add/Remove buttons */}
                       <div className="flex items-center gap-2">
-                        {qty > 0 ? (
+                        {item.is_available === false ? (
+                          <span className="px-2.5 py-1 rounded-xl bg-stone-100 text-stone-400 font-bold text-xs border border-stone-200">
+                            Sold Out
+                          </span>
+                        ) : qty > 0 ? (
                           <div className="flex items-center gap-2 bg-stone-100 p-1 rounded-xl">
                             <button 
                               onClick={() => removeFromCart(item.id)}
@@ -1132,13 +1255,25 @@ export default function GuestPortalPage() {
           footer={
             <div className="flex justify-between items-center w-full">
               <Button variant="outline" onClick={() => setIsCartOpen(false)} disabled={isSubmittingOrder}>Back</Button>
-              <Button variant="primary" onClick={handlePlaceOrder} disabled={isSubmittingOrder}>
-                {isSubmittingOrder ? 'Dispatching Order...' : paymentOption === 'ROOM_CHARGE' ? 'Charge to Room Folio' : 'Pay via UPI Now'}
+              <Button variant="primary" onClick={handlePlaceOrder} disabled={isSubmittingOrder || !reservation}>
+                {!reservation 
+                  ? 'Active Check-in Required' 
+                  : isSubmittingOrder 
+                    ? 'Dispatching Order...' 
+                    : paymentOption === 'ROOM_CHARGE' 
+                      ? 'Charge to Room Folio' 
+                      : 'Pay via UPI Now'}
               </Button>
             </div>
           }
         >
           <div className="space-y-4 text-xs">
+            {!reservation && (
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
+                <span>Orders cannot be placed because this room is not currently checked in. Please contact front desk.</span>
+              </div>
+            )}
             <div className="divide-y divide-stone-100 max-h-48 overflow-y-auto">
               {Object.entries(cart).map(([itemId, qty]) => {
                 const item = menuItems.find(i => i.id === itemId);
@@ -1226,11 +1361,19 @@ export default function GuestPortalPage() {
             footer={
               <div className="flex justify-end gap-2 w-full">
                 <Button variant="outline" onClick={() => setSelectedService(null)}>Cancel</Button>
-                <Button variant="primary" onClick={handleCreateRequest}>Submit Request</Button>
+                <Button variant="primary" onClick={handleCreateRequest} disabled={!reservation}>
+                  {!reservation ? 'Check-in Required' : 'Submit Request'}
+                </Button>
               </div>
             }
           >
             <div className="space-y-3 text-xs">
+              {!reservation && (
+                <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
+                  <span>Service requests are unavailable until room check-in is complete at reception.</span>
+                </div>
+              )}
               <p className="text-stone-600">{selectedService.description || 'Our housekeeping / concierge team will attend to your room.'}</p>
               <div>
                 <label className="block font-semibold text-stone-700 mb-1">Additional details or quantity:</label>

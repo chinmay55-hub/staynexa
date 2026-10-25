@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   IndianRupee, 
   Search, 
@@ -18,8 +18,10 @@ import {
   guestService, 
   roomService, 
   hotelService,
-  activityLogService
+  activityLogService,
+  reloadDemoStoreFromStorage
 } from '../../services/demoDataService';
+import { realtimeSync } from '../../services/realtimeSync';
 import type { 
   Folio, 
   FolioItem, 
@@ -34,18 +36,58 @@ import {
   Input, 
   Select, 
   PaymentBadge, 
-  Modal 
+  Modal,
+  useToast
 } from '../../components/ui';
 
 export default function FoliosPage() {
   const { user } = useAuth();
+  const toast = useToast();
   const hotelId = user?.hotel_id || 'hotel-001';
   const hotel = hotelService.getById(hotelId);
 
-  const [reservations] = useState(() => reservationService.getAll(hotelId));
+  const [reservations, setReservations] = useState(() => reservationService.getAll(hotelId));
   const [selectedFolio, setSelectedFolio] = useState<Folio | null>(null);
   const [folioItems, setFolioItems] = useState<FolioItem[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
+
+  // Async Mutation & Submission States
+  const [isSubmittingCharge, setIsSubmittingCharge] = useState(false);
+  const [chargeError, setChargeError] = useState<string | null>(null);
+  const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+
+  // Realtime & Cross-Tab Synchronization
+  useEffect(() => {
+    const refreshData = () => {
+      reloadDemoStoreFromStorage();
+      setReservations([...reservationService.getAll(hotelId)]);
+      if (selectedFolio) {
+        const refreshed = folioService.getById(selectedFolio.id);
+        if (refreshed) {
+          setSelectedFolio(refreshed);
+          setFolioItems(folioService.getItems(selectedFolio.id));
+          setPayments(folioService.getPayments(selectedFolio.id));
+        }
+      }
+    };
+
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'staynexa_demo_store' || e.key === 'staynexa_global_sync') {
+        refreshData();
+      }
+    };
+
+    window.addEventListener('storage', handleStorage);
+    const unsubOrder = realtimeSync.subscribe('NEW_ORDER', refreshData);
+    const unsubRes = realtimeSync.subscribe('RESERVATION_UPDATED', refreshData);
+
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      unsubOrder();
+      unsubRes();
+    };
+  }, [hotelId, selectedFolio]);
 
   // Modals
   const [isDetailOpen, setIsDetailOpen] = useState(false);
@@ -93,67 +135,106 @@ export default function FoliosPage() {
     setSelectedFolio(folio);
     setFolioItems(folioService.getItems(folio.id));
     setPayments(folioService.getPayments(folio.id));
+    setPaymentForm(prev => ({ ...prev, amount: Math.max(0, folio.outstanding) }));
     setIsDetailOpen(true);
   };
 
-  const handleAddCharge = (e: React.FormEvent) => {
+  const handleAddCharge = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedFolio || !chargeForm.description) return;
-    const subtotal = chargeForm.quantity * chargeForm.unit_price;
-    const tax = Math.round(subtotal * (chargeForm.tax_percent / 100));
-    const total = subtotal + tax;
+    if (!selectedFolio || !chargeForm.description || isSubmittingCharge) return;
+    setChargeError(null);
+    setIsSubmittingCharge(true);
 
-    folioService.addItem({
-      folio_id: selectedFolio.id,
-      hotel_id: hotelId,
-      description: chargeForm.description,
-      category: chargeForm.category,
-      quantity: Number(chargeForm.quantity),
-      unit_price: Number(chargeForm.unit_price),
-      tax_percent: Number(chargeForm.tax_percent),
-      tax_amount: tax,
-      discount_amount: 0,
-      total,
-      posted_at: new Date().toISOString(),
-      posted_by: user?.full_name,
-    });
+    try {
+      const subtotal = chargeForm.quantity * chargeForm.unit_price;
+      const tax = Math.round(subtotal * (chargeForm.tax_percent / 100));
+      const total = subtotal + tax;
 
-    const refreshedFolio = folioService.getById(selectedFolio.id);
-    if (refreshedFolio) setSelectedFolio(refreshedFolio);
-    setFolioItems(folioService.getItems(selectedFolio.id));
-    setIsAddChargeOpen(false);
+      await folioService.addItemAsync({
+        folio_id: selectedFolio.id,
+        hotel_id: hotelId,
+        description: chargeForm.description,
+        category: chargeForm.category,
+        quantity: Number(chargeForm.quantity),
+        unit_price: Number(chargeForm.unit_price),
+        tax_percent: Number(chargeForm.tax_percent),
+        tax_amount: tax,
+        discount_amount: 0,
+        total,
+        posted_at: new Date().toISOString(),
+        posted_by: user?.full_name,
+      });
+
+      const refreshedFolio = folioService.getById(selectedFolio.id);
+      if (refreshedFolio) setSelectedFolio(refreshedFolio);
+      setFolioItems(folioService.getItems(selectedFolio.id));
+      setIsAddChargeOpen(false);
+      setChargeForm({
+        description: '',
+        category: 'ROOM_SERVICE',
+        quantity: 1,
+        unit_price: 500,
+        tax_percent: 5,
+      });
+      toast.success('Charge posted successfully', `Added ₹${total.toLocaleString('en-IN')} to Folio`);
+    } catch (err: any) {
+      console.error('Failed to post charge:', err);
+      const msg = err?.message || 'Database write rejected. Please check network and try again.';
+      setChargeError(msg);
+      toast.error('Failed to post charge', msg);
+    } finally {
+      setIsSubmittingCharge(false);
+    }
   };
 
-  const handleRecordPayment = (e: React.FormEvent) => {
+  const handleRecordPayment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedFolio || paymentForm.amount <= 0) return;
+    if (!selectedFolio || paymentForm.amount <= 0 || isSubmittingPayment) return;
+    setPaymentError(null);
+    setIsSubmittingPayment(true);
 
-    folioService.addPayment({
-      hotel_id: hotelId,
-      folio_id: selectedFolio.id,
-      guest_id: selectedFolio.guest_id,
-      reservation_id: selectedFolio.reservation_id,
-      amount: Number(paymentForm.amount),
-      method: paymentForm.method,
-      reference: paymentForm.reference || `REF-${Date.now().toString().slice(-6)}`,
-      notes: paymentForm.notes,
-      received_by: user?.full_name,
-    });
+    try {
+      await folioService.addPaymentAsync({
+        hotel_id: hotelId,
+        folio_id: selectedFolio.id,
+        guest_id: selectedFolio.guest_id,
+        reservation_id: selectedFolio.reservation_id,
+        amount: Number(paymentForm.amount),
+        method: paymentForm.method,
+        reference: paymentForm.reference || `REF-${Date.now().toString().slice(-6)}`,
+        notes: paymentForm.notes,
+        received_by: user?.full_name,
+      });
 
-    activityLogService.log({
-      hotel_id: hotelId,
-      user_id: user?.id,
-      actor_name: user?.full_name,
-      action: 'PAYMENT_RECORDED',
-      entity_type: 'folio',
-      entity_id: selectedFolio.id,
-      metadata: { amount: paymentForm.amount, method: paymentForm.method }
-    });
+      activityLogService.log({
+        hotel_id: hotelId,
+        user_id: user?.id,
+        actor_name: user?.full_name,
+        action: 'PAYMENT_RECORDED',
+        entity_type: 'folio',
+        entity_id: selectedFolio.id,
+        metadata: { amount: paymentForm.amount, method: paymentForm.method }
+      });
 
-    const refreshedFolio = folioService.getById(selectedFolio.id);
-    if (refreshedFolio) setSelectedFolio(refreshedFolio);
-    setPayments(folioService.getPayments(selectedFolio.id));
-    setIsRecordPaymentOpen(false);
+      const refreshedFolio = folioService.getById(selectedFolio.id);
+      if (refreshedFolio) setSelectedFolio(refreshedFolio);
+      setPayments(folioService.getPayments(selectedFolio.id));
+      setIsRecordPaymentOpen(false);
+      setPaymentForm({
+        amount: refreshedFolio ? Math.max(0, refreshedFolio.outstanding) : 0,
+        method: 'UPI',
+        reference: '',
+        notes: 'Front desk payment collection',
+      });
+      toast.success('Payment recorded successfully', `Received ₹${paymentForm.amount.toLocaleString('en-IN')} via ${paymentForm.method}`);
+    } catch (err: any) {
+      console.error('Failed to record payment:', err);
+      const msg = err?.message || 'Database write rejected. Please check network and try again.';
+      setPaymentError(msg);
+      toast.error('Failed to record payment', msg);
+    } finally {
+      setIsSubmittingPayment(false);
+    }
   };
 
   return (
@@ -262,7 +343,12 @@ export default function FoliosPage() {
                 </Button>
                 <Button 
                   variant="primary" 
-                  onClick={() => setIsRecordPaymentOpen(true)}
+                  onClick={() => {
+                    if (selectedFolio) {
+                      setPaymentForm(prev => ({ ...prev, amount: Math.max(0, selectedFolio.outstanding) }));
+                    }
+                    setIsRecordPaymentOpen(true);
+                  }}
                   iconLeft={<IndianRupee className="w-3.5 h-3.5" />}
                 >
                   Record Payment
@@ -364,29 +450,42 @@ export default function FoliosPage() {
       {/* Add Charge Modal */}
       <Modal
         isOpen={isAddChargeOpen}
-        onClose={() => setIsAddChargeOpen(false)}
+        onClose={() => !isSubmittingCharge && setIsAddChargeOpen(false)}
         title="Post Hotel Charge to Folio"
         size="md"
         footer={
           <div className="flex justify-end gap-2 w-full">
-            <Button variant="outline" onClick={() => setIsAddChargeOpen(false)}>Cancel</Button>
-            <Button variant="primary" onClick={handleAddCharge}>Post to Folio</Button>
+            <Button variant="outline" onClick={() => setIsAddChargeOpen(false)} disabled={isSubmittingCharge}>Cancel</Button>
+            <Button variant="primary" onClick={handleAddCharge} disabled={isSubmittingCharge}>
+              {isSubmittingCharge ? 'Posting...' : 'Post to Folio'}
+            </Button>
           </div>
         }
       >
-        <form className="space-y-3">
+        <form className="space-y-3" onSubmit={handleAddCharge}>
+          {chargeError && (
+            <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2 text-xs text-red-700">
+              <AlertCircle className="w-4 h-4 shrink-0 text-red-600 mt-0.5" />
+              <div>
+                <strong className="block font-semibold">Write Confirmation Failed</strong>
+                <span>{chargeError}</span>
+              </div>
+            </div>
+          )}
           <Input
             label="Charge Description"
             required
             placeholder="e.g. Laundry Express Dry Clean (2 Items)"
             value={chargeForm.description}
             onChange={e => setChargeForm({ ...chargeForm, description: e.target.value })}
+            disabled={isSubmittingCharge}
           />
           <div className="grid grid-cols-2 gap-3">
             <Select
               label="Service Category"
               value={chargeForm.category}
               onChange={e => setChargeForm({ ...chargeForm, category: e.target.value as any })}
+              disabled={isSubmittingCharge}
               options={[
                 { value: 'ROOM_SERVICE', label: 'Room Service' },
                 { value: 'RESTAURANT', label: 'Restaurant / Bar' },
@@ -402,18 +501,21 @@ export default function FoliosPage() {
               min="1"
               value={chargeForm.quantity}
               onChange={e => setChargeForm({ ...chargeForm, quantity: Number(e.target.value) })}
+              disabled={isSubmittingCharge}
             />
             <Input
               label="Unit Price (₹)"
               type="number"
               value={chargeForm.unit_price}
               onChange={e => setChargeForm({ ...chargeForm, unit_price: Number(e.target.value) })}
+              disabled={isSubmittingCharge}
             />
             <Input
               label="GST Tax Rate (%)"
               type="number"
               value={chargeForm.tax_percent}
               onChange={e => setChargeForm({ ...chargeForm, tax_percent: Number(e.target.value) })}
+              disabled={isSubmittingCharge}
             />
           </div>
         </form>
@@ -422,28 +524,41 @@ export default function FoliosPage() {
       {/* Record Payment Modal */}
       <Modal
         isOpen={isRecordPaymentOpen}
-        onClose={() => setIsRecordPaymentOpen(false)}
+        onClose={() => !isSubmittingPayment && setIsRecordPaymentOpen(false)}
         title="Collect & Record Payment"
         size="md"
         footer={
           <div className="flex justify-end gap-2 w-full">
-            <Button variant="outline" onClick={() => setIsRecordPaymentOpen(false)}>Cancel</Button>
-            <Button variant="primary" onClick={handleRecordPayment}>Confirm Payment</Button>
+            <Button variant="outline" onClick={() => setIsRecordPaymentOpen(false)} disabled={isSubmittingPayment}>Cancel</Button>
+            <Button variant="primary" onClick={handleRecordPayment} disabled={isSubmittingPayment}>
+              {isSubmittingPayment ? 'Confirming...' : 'Confirm Payment'}
+            </Button>
           </div>
         }
       >
-        <form className="space-y-3">
+        <form className="space-y-3" onSubmit={handleRecordPayment}>
+          {paymentError && (
+            <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2 text-xs text-red-700">
+              <AlertCircle className="w-4 h-4 shrink-0 text-red-600 mt-0.5" />
+              <div>
+                <strong className="block font-semibold">Payment Confirmation Failed</strong>
+                <span>{paymentError}</span>
+              </div>
+            </div>
+          )}
           <Input
             label="Payment Amount (₹)"
             type="number"
             required
             value={paymentForm.amount}
             onChange={e => setPaymentForm({ ...paymentForm, amount: Number(e.target.value) })}
+            disabled={isSubmittingPayment}
           />
           <Select
             label="Payment Method"
             value={paymentForm.method}
             onChange={e => setPaymentForm({ ...paymentForm, method: e.target.value as PaymentMethod })}
+            disabled={isSubmittingPayment}
             options={[
               { value: 'UPI', label: 'UPI (GPay / PhonePe / Paytm)' },
               { value: 'CARD', label: 'Credit / Debit Card (POS)' },
@@ -457,6 +572,7 @@ export default function FoliosPage() {
             placeholder="e.g. UPI-9876543210 or POS Slip #"
             value={paymentForm.reference}
             onChange={e => setPaymentForm({ ...paymentForm, reference: e.target.value })}
+            disabled={isSubmittingPayment}
           />
         </form>
       </Modal>

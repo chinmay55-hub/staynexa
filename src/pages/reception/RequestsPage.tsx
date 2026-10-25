@@ -17,7 +17,8 @@ import {
   roomService, 
   guestService, 
   staffService,
-  activityLogService
+  activityLogService,
+  reloadDemoStoreFromStorage
 } from '../../services/demoDataService';
 import { realtimeSync } from '../../services/realtimeSync';
 import type { ServiceRequest, RequestStatus, Priority } from '../../types';
@@ -29,17 +30,23 @@ import {
   Input, 
   Select, 
   RequestBadge, 
-  Modal 
+  Modal,
+  useToast
 } from '../../components/ui';
 
 export default function RequestsPage() {
   const { user } = useAuth();
+  const toast = useToast();
   const hotelId = user?.hotel_id || 'hotel-001';
 
   const [requests, setRequests] = useState(() => serviceRequestService.getAll(hotelId));
   const [rooms] = useState(() => roomService.getAll(hotelId));
   const [staff] = useState(() => staffService.getAll(hotelId));
   const [services] = useState(() => serviceRequestService.getServices(hotelId));
+
+  // Async Mutation & Error States
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [reqError, setReqError] = useState<string | null>(null);
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
@@ -64,7 +71,16 @@ export default function RequestsPage() {
       );
     });
 
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'staynexa_demo_store' || e.key === 'staynexa_global_sync') {
+        reloadDemoStoreFromStorage();
+        setRequests([...serviceRequestService.getAll(hotelId)]);
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+
     return () => {
+      window.removeEventListener('storage', handleStorage);
       disconnectSupabase();
       unsubNewRequest();
       unsubStatusChange();
@@ -93,58 +109,80 @@ export default function RequestsPage() {
     return matchesSearch && matchesStatus && matchesPriority;
   });
 
-  const handleUpdateStatus = (id: string, newStatus: RequestStatus) => {
-    const updated = serviceRequestService.update(id, {
-      status: newStatus,
-      ...(newStatus === 'COMPLETED' ? { completed_at: new Date().toISOString() } : {})
-    });
-    if (updated) {
-      setRequests([...serviceRequestService.getAll(hotelId)]);
-      activityLogService.log({
-        hotel_id: hotelId,
-        user_id: user?.id,
-        actor_name: user?.full_name,
-        action: 'UPDATE_SERVICE_REQUEST',
-        entity_type: 'service_request',
-        entity_id: id,
-        metadata: { new_status: newStatus }
+  const handleUpdateStatus = async (id: string, newStatus: RequestStatus) => {
+    try {
+      const updated = await serviceRequestService.updateAsync(id, {
+        status: newStatus,
+        ...(newStatus === 'COMPLETED' ? { completed_at: new Date().toISOString() } : {})
       });
+      if (updated) {
+        setRequests([...serviceRequestService.getAll(hotelId)]);
+        activityLogService.log({
+          hotel_id: hotelId,
+          user_id: user?.id,
+          actor_name: user?.full_name,
+          action: 'UPDATE_SERVICE_REQUEST',
+          entity_type: 'service_request',
+          entity_id: id,
+          metadata: { new_status: newStatus }
+        });
+        toast.success('Request updated', `Status changed to ${newStatus}`);
+      }
+    } catch (err: any) {
+      toast.error('Failed to update request', err?.message || 'Database write rejected');
     }
   };
 
-  const handleAssign = (id: string, staffName: string) => {
-    const updated = serviceRequestService.update(id, {
-      assigned_to: staffName,
-      status: 'ASSIGNED'
-    });
-    if (updated) {
-      setRequests([...serviceRequestService.getAll(hotelId)]);
+  const handleAssign = async (id: string, staffName: string) => {
+    try {
+      const updated = await serviceRequestService.updateAsync(id, {
+        assigned_to: staffName,
+        status: 'ASSIGNED'
+      });
+      if (updated) {
+        setRequests([...serviceRequestService.getAll(hotelId)]);
+        toast.success('Staff assigned', `${staffName} assigned to ticket`);
+      }
+    } catch (err: any) {
+      toast.error('Failed to assign staff', err?.message || 'Database write rejected');
     }
   };
 
-  const handleCreateRequest = (e: React.FormEvent) => {
+  const handleCreateRequest = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newReq.title) return;
-    serviceRequestService.create({
-      hotel_id: hotelId,
-      title: newReq.title,
-      description: newReq.description,
-      room_id: newReq.room_id || undefined,
-      service_id: newReq.service_id || undefined,
-      priority: newReq.priority,
-      status: newReq.assigned_to ? 'ASSIGNED' : 'PENDING',
-      assigned_to: newReq.assigned_to || undefined,
-    });
-    setRequests([...serviceRequestService.getAll(hotelId)]);
-    setIsAddOpen(false);
-    setNewReq({
-      title: '',
-      description: '',
-      room_id: rooms[0]?.id || '',
-      service_id: services[0]?.id || '',
-      priority: 'MEDIUM',
-      assigned_to: '',
-    });
+    if (!newReq.title || isSubmitting) return;
+    setReqError(null);
+    setIsSubmitting(true);
+
+    try {
+      await serviceRequestService.createAsync({
+        hotel_id: hotelId,
+        title: newReq.title,
+        description: newReq.description,
+        room_id: newReq.room_id || undefined,
+        service_id: newReq.service_id || undefined,
+        priority: newReq.priority,
+        status: newReq.assigned_to ? 'ASSIGNED' : 'PENDING',
+        assigned_to: newReq.assigned_to || undefined,
+      });
+      setRequests([...serviceRequestService.getAll(hotelId)]);
+      setIsAddOpen(false);
+      setNewReq({
+        title: '',
+        description: '',
+        room_id: rooms[0]?.id || '',
+        service_id: services[0]?.id || '',
+        priority: 'MEDIUM',
+        assigned_to: '',
+      });
+      toast.success('Request created', 'Service ticket registered and notified');
+    } catch (err: any) {
+      const msg = err?.message || 'Database write rejected request.';
+      setReqError(msg);
+      toast.error('Failed to create ticket', msg);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -293,23 +331,32 @@ export default function RequestsPage() {
       {/* New Request Modal */}
       <Modal
         isOpen={isAddOpen}
-        onClose={() => setIsAddOpen(false)}
+        onClose={() => !isSubmitting && setIsAddOpen(false)}
         title="Create New Service Request"
         size="md"
         footer={
           <div className="flex justify-end gap-2 w-full">
-            <Button variant="outline" onClick={() => setIsAddOpen(false)}>Cancel</Button>
-            <Button variant="primary" onClick={handleCreateRequest}>Create Ticket</Button>
+            <Button variant="outline" onClick={() => setIsAddOpen(false)} disabled={isSubmitting}>Cancel</Button>
+            <Button variant="primary" onClick={handleCreateRequest} disabled={isSubmitting}>
+              {isSubmitting ? 'Creating...' : 'Create Ticket'}
+            </Button>
           </div>
         }
       >
-        <form className="space-y-3">
+        <form className="space-y-3" onSubmit={handleCreateRequest}>
+          {reqError && (
+            <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2 text-xs text-red-700">
+              <span className="font-bold">Error:</span>
+              <span>{reqError}</span>
+            </div>
+          )}
           <Input
             label="Request Title"
             required
             placeholder="e.g. Extra Bath Towels & Water Bottles"
             value={newReq.title}
             onChange={e => setNewReq({ ...newReq, title: e.target.value })}
+            disabled={isSubmitting}
           />
           <div className="grid grid-cols-2 gap-3">
             <Select

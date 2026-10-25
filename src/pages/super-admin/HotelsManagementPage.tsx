@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   Building2, 
@@ -16,7 +16,7 @@ import {
   ShieldAlert,
   SlidersHorizontal
 } from 'lucide-react';
-import { hotelService, subscriptionService } from '../../services/demoDataService';
+import { hotelService, subscriptionService, reloadDemoStoreFromStorage } from '../../services/demoDataService';
 import type { Hotel, HotelStatus } from '../../types';
 import { 
   Card, 
@@ -36,6 +36,17 @@ export default function HotelsManagementPage() {
   const [subscriptions] = useState(() => subscriptionService.getAll());
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
+
+  useEffect(() => {
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'staynexa_demo_store' || e.key === 'staynexa_global_sync') {
+        reloadDemoStoreFromStorage();
+        setHotels([...hotelService.getAll()]);
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, []);
   
   // Selected hotel for detail / status editing
   const [selectedHotel, setSelectedHotel] = useState<Hotel | null>(null);

@@ -16,7 +16,8 @@ import {
   housekeepingService, 
   roomService, 
   maintenanceService,
-  activityLogService
+  activityLogService,
+  reloadDemoStoreFromStorage
 } from '../../services/demoDataService';
 import { realtimeSync } from '../../services/realtimeSync';
 import type { HousekeepingTask, Room, Priority } from '../../types';
@@ -28,7 +29,8 @@ import {
   Input, 
   Select, 
   HousekeepingBadge, 
-  Modal 
+  Modal,
+  useToast
 } from '../../components/ui';
 
 export default function HousekeepingPage({ defaultTab = 'TASKS' }: { defaultTab?: 'TASKS' | 'ROOMS' } = {}) {
@@ -48,6 +50,12 @@ export default function HousekeepingPage({ defaultTab = 'TASKS' }: { defaultTab?
   useEffect(() => {
     const disconnectSupabase = realtimeSync.connectSupabaseHotelChannel(hotelId);
 
+    const refreshHousekeeping = () => {
+      reloadDemoStoreFromStorage();
+      setTasks([...housekeepingService.getTasks(hotelId)]);
+      setRooms([...roomService.getAll(hotelId)]);
+    };
+
     const unsubNewTask = realtimeSync.subscribe('NEW_HOUSEKEEPING_TASK', ({ task }) => {
       if (task.hotel_id === hotelId) {
         setTasks(prev => {
@@ -64,7 +72,15 @@ export default function HousekeepingPage({ defaultTab = 'TASKS' }: { defaultTab?
       setRooms([...roomService.getAll(hotelId)]);
     });
 
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'staynexa_demo_store' || e.key === 'staynexa_global_sync') {
+        refreshHousekeeping();
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+
     return () => {
+      window.removeEventListener('storage', handleStorage);
       disconnectSupabase();
       unsubNewTask();
       unsubUpdateTask();
@@ -75,7 +91,13 @@ export default function HousekeepingPage({ defaultTab = 'TASKS' }: { defaultTab?
   const [maintenanceRoom, setMaintenanceRoom] = useState<Room | null>(null);
   const [maintTitle, setMaintTitle] = useState('');
   const [maintDesc, setMaintDesc] = useState('');
+  const [maintCategory, setMaintCategory] = useState<'HVAC' | 'PLUMBING' | 'ELECTRICAL' | 'CARPENTRY' | 'OTHER'>('PLUMBING');
   const [maintPriority, setMaintPriority] = useState<Priority>('HIGH');
+
+  // Async Mutation & Error States
+  const toast = useToast();
+  const [isSubmittingTask, setIsSubmittingTask] = useState(false);
+  const [taskError, setTaskError] = useState<string | null>(null);
 
   // Add Task Modal
   const [isAddTaskOpen, setIsAddTaskOpen] = useState(false);
@@ -86,68 +108,102 @@ export default function HousekeepingPage({ defaultTab = 'TASKS' }: { defaultTab?
     notes: '',
   });
 
-  const handleStartTask = (taskId: string) => {
-    housekeepingService.updateTask(taskId, {
-      status: 'IN_PROGRESS',
-      started_at: new Date().toISOString(),
-    });
-    setTasks([...housekeepingService.getTasks(hotelId)]);
-    setRooms([...roomService.getAll(hotelId)]);
+  const handleStartTask = async (taskId: string) => {
+    try {
+      await housekeepingService.updateTaskAsync(taskId, {
+        status: 'IN_PROGRESS',
+        started_at: new Date().toISOString(),
+      });
+      setTasks([...housekeepingService.getTasks(hotelId)]);
+      setRooms([...roomService.getAll(hotelId)]);
+      toast.success('Task started', 'Housekeeping cleaning in progress');
+    } catch (err: any) {
+      toast.error('Failed to start task', err?.message || 'Database write rejected');
+    }
   };
 
-  const handleCompleteTask = (taskId: string) => {
-    housekeepingService.updateTask(taskId, {
-      status: 'COMPLETED',
-      completed_at: new Date().toISOString(),
-    });
-    setTasks([...housekeepingService.getTasks(hotelId)]);
-    setRooms([...roomService.getAll(hotelId)]);
-    activityLogService.log({
-      hotel_id: hotelId,
-      user_id: user?.id,
-      actor_name: user?.full_name,
-      action: 'HOUSEKEEPING_COMPLETED',
-      entity_type: 'housekeeping_task',
-      entity_id: taskId
-    });
+  const handleCompleteTask = async (taskId: string) => {
+    try {
+      await housekeepingService.updateTaskAsync(taskId, {
+        status: 'COMPLETED',
+        completed_at: new Date().toISOString(),
+      });
+      setTasks([...housekeepingService.getTasks(hotelId)]);
+      setRooms([...roomService.getAll(hotelId)]);
+      activityLogService.log({
+        hotel_id: hotelId,
+        user_id: user?.id,
+        actor_name: user?.full_name,
+        action: 'HOUSEKEEPING_COMPLETED',
+        entity_type: 'housekeeping_task',
+        entity_id: taskId
+      });
+      toast.success('Task completed', 'Room marked for inspection');
+    } catch (err: any) {
+      toast.error('Failed to complete task', err?.message || 'Database write rejected');
+    }
   };
 
-  const handleInspectTask = (taskId: string) => {
-    housekeepingService.updateTask(taskId, { status: 'INSPECTED' });
-    setTasks([...housekeepingService.getTasks(hotelId)]);
-    setRooms([...roomService.getAll(hotelId)]);
+  const handleInspectTask = async (taskId: string) => {
+    try {
+      await housekeepingService.updateTaskAsync(taskId, { status: 'INSPECTED' });
+      setTasks([...housekeepingService.getTasks(hotelId)]);
+      setRooms([...roomService.getAll(hotelId)]);
+      toast.success('Task inspected', 'Room marked as clean and available');
+    } catch (err: any) {
+      toast.error('Failed to inspect task', err?.message || 'Database write rejected');
+    }
   };
 
-  const handleCreateTask = (e: React.FormEvent) => {
+  const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
-    housekeepingService.createTask({
-      hotel_id: hotelId,
-      room_id: newTask.room_id,
-      type: newTask.type,
-      status: 'PENDING',
-      priority: newTask.priority,
-      notes: newTask.notes,
-      assigned_to: user?.full_name || 'Housekeeping Crew',
-    });
-    setTasks([...housekeepingService.getTasks(hotelId)]);
-    setIsAddTaskOpen(false);
+    if (isSubmittingTask) return;
+    setTaskError(null);
+    setIsSubmittingTask(true);
+
+    try {
+      await housekeepingService.createTaskAsync({
+        hotel_id: hotelId,
+        room_id: newTask.room_id,
+        type: newTask.type,
+        status: 'PENDING',
+        priority: newTask.priority,
+        notes: newTask.notes,
+        assigned_to: user?.full_name || 'Housekeeping Crew',
+      });
+      setTasks([...housekeepingService.getTasks(hotelId)]);
+      setIsAddTaskOpen(false);
+      toast.success('Task created', 'Housekeeping dispatch scheduled');
+    } catch (err: any) {
+      const msg = err?.message || 'Database write rejected housekeeping task';
+      setTaskError(msg);
+      toast.error('Failed to create task', msg);
+    } finally {
+      setIsSubmittingTask(false);
+    }
   };
 
-  const handleCreateMaintenance = (e: React.FormEvent) => {
+  const handleCreateMaintenance = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!maintenanceRoom || !maintTitle) return;
-    maintenanceService.create({
-      hotel_id: hotelId,
-      room_id: maintenanceRoom.id,
-      title: maintTitle,
-      description: maintDesc,
-      category: 'PLUMBING',
-      priority: maintPriority,
-      status: 'NEW',
-    });
-    setMaintenanceRoom(null);
-    setMaintTitle('');
-    setMaintDesc('');
+    try {
+      await maintenanceService.createAsync({
+        hotel_id: hotelId,
+        room_id: maintenanceRoom.id,
+        title: maintTitle,
+        description: maintDesc,
+        category: maintCategory,
+        priority: maintPriority,
+        status: 'NEW',
+      });
+      setMaintenanceRoom(null);
+      setMaintTitle('');
+      setMaintDesc('');
+      setMaintCategory('PLUMBING');
+      toast.success('Maintenance ticket created', 'Issue reported to maintenance queue');
+    } catch (err: any) {
+      toast.error('Failed to create maintenance ticket', err?.message || 'Database write rejected');
+    }
   };
 
   const pendingTasks = tasks.filter(t => t.status !== 'COMPLETED' && t.status !== 'INSPECTED');
@@ -270,13 +326,20 @@ export default function HousekeepingPage({ defaultTab = 'TASKS' }: { defaultTab?
                       <span className="font-bold text-stone-900">Room {t.room?.number}</span>
                       <span className="text-stone-500">{t.type} completed by {t.assigned_to || 'Staff'}</span>
                     </div>
-                    <Button 
-                      variant="ghost" 
-                      size="sm"
-                      onClick={() => handleInspectTask(t.id)}
-                    >
-                      Mark Inspected
-                    </Button>
+                    {t.status === 'INSPECTED' ? (
+                      <span className="flex items-center gap-1 text-teal-700 font-semibold px-2 py-1 bg-teal-50 rounded text-xs border border-teal-200">
+                        <Check className="w-3.5 h-3.5 text-teal-600" /> Inspected
+                      </span>
+                    ) : (
+                      <Button 
+                        variant="ghost" 
+                        size="sm"
+                        onClick={() => handleInspectTask(t.id)}
+                        iconLeft={<Eye className="w-3.5 h-3.5 text-stone-500" />}
+                      >
+                        Mark Inspected
+                      </Button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -417,16 +480,30 @@ export default function HousekeepingPage({ defaultTab = 'TASKS' }: { defaultTab?
               value={maintTitle}
               onChange={e => setMaintTitle(e.target.value)}
             />
-            <Select
-              label="Priority Level"
-              value={maintPriority}
-              onChange={e => setMaintPriority(e.target.value as any)}
-              options={[
-                { value: 'HIGH', label: 'High / Critical' },
-                { value: 'MEDIUM', label: 'Medium' },
-                { value: 'LOW', label: 'Low' },
-              ]}
-            />
+            <div className="grid grid-cols-2 gap-3">
+              <Select
+                label="Category"
+                value={maintCategory}
+                onChange={e => setMaintCategory(e.target.value as any)}
+                options={[
+                  { value: 'HVAC', label: 'HVAC / Air Conditioning' },
+                  { value: 'PLUMBING', label: 'Plumbing & Drainage' },
+                  { value: 'ELECTRICAL', label: 'Electrical & Lighting' },
+                  { value: 'CARPENTRY', label: 'Carpentry & Furniture' },
+                  { value: 'OTHER', label: 'Other Facility' },
+                ]}
+              />
+              <Select
+                label="Priority Level"
+                value={maintPriority}
+                onChange={e => setMaintPriority(e.target.value as any)}
+                options={[
+                  { value: 'HIGH', label: 'High / Critical' },
+                  { value: 'MEDIUM', label: 'Medium' },
+                  { value: 'LOW', label: 'Low' },
+                ]}
+              />
+            </div>
             <Input
               label="Description of Breakdown"
               placeholder="Provide technical specifics for the repair technician"

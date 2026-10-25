@@ -33,17 +33,25 @@ import {
   Input, 
   Select, 
   ReservationBadge, 
-  Modal 
+  Modal,
+  useToast
 } from '../../components/ui';
 
 export default function ReservationsPage() {
   const { user } = useAuth();
+  const toast = useToast();
   const hotelId = user?.hotel_id || 'hotel-001';
 
   const [reservations, setReservations] = useState(() => reservationService.getAll(hotelId));
   const [guests, setGuests] = useState(() => guestService.getAll(hotelId));
   const [, setRooms] = useState(() => roomService.getAll(hotelId));
   const [roomTypes] = useState(() => roomService.getTypes(hotelId));
+
+  // Async Mutation & Error States
+  const [isSubmittingRes, setIsSubmittingRes] = useState(false);
+  const [resError, setResError] = useState<string | null>(null);
+  const [isSubmittingCheckout, setIsSubmittingCheckout] = useState(false);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
 
   // Real-time synchronization across rooms and reservations
   useEffect(() => {
@@ -124,117 +132,147 @@ export default function ReservationsPage() {
 
 
   // Handle Checkout submission with Folio Balance Enforcement & City Ledger Override
-  const handleConfirmCheckout = () => {
-    if (!checkOutRes) return;
-    const folio = folioService.getByReservation(checkOutRes.id);
-    const outstanding = folio ? Math.max(0, folio.outstanding) : 0;
+  const handleConfirmCheckout = async () => {
+    if (!checkOutRes || isSubmittingCheckout) return;
+    setCheckoutError(null);
+    setIsSubmittingCheckout(true);
 
-    if (outstanding > 0) {
-      if (isCityLedgerOverride) {
-        if (!corporateAccountName.trim()) return;
-        if (folio) {
-          folioService.addItem({
-            hotel_id: hotelId,
-            folio_id: folio.id,
-            description: `Transferred to Corporate AR (City Ledger): ${corporateAccountName}`,
-            category: 'SERVICE',
-            quantity: 1,
-            unit_price: 0,
-            tax_percent: 0,
-            tax_amount: 0,
-            discount_amount: 0,
-            total: 0,
-            posted_at: new Date().toISOString(),
-            posted_by: user?.full_name || 'Front Desk',
-          });
-        }
-      } else {
-        // Collect payment to settle zero balance
-        if (folio) {
-          folioService.addPayment({
-            hotel_id: hotelId,
-            folio_id: folio.id,
-            guest_id: checkOutRes.guest_id,
-            reservation_id: checkOutRes.id,
-            amount: outstanding,
-            method: settlementMethod,
-            reference: `SETTLE-${Date.now().toString().slice(-6)}`,
-            notes: `Full checkout settlement (${settlementMethod})`,
-            received_by: user?.full_name || 'Front Desk',
-          });
+    try {
+      const folio = folioService.getByReservation(checkOutRes.id);
+      const outstanding = folio ? Math.max(0, folio.outstanding) : 0;
+
+      if (outstanding > 0) {
+        if (isCityLedgerOverride) {
+          if (!corporateAccountName.trim()) {
+            throw new Error('Please specify the Corporate Account Name for City Ledger override.');
+          }
+          if (folio) {
+            await folioService.addItemAsync({
+              hotel_id: hotelId,
+              folio_id: folio.id,
+              description: `Transferred to Corporate AR (City Ledger): ${corporateAccountName}`,
+              category: 'SERVICE',
+              quantity: 1,
+              unit_price: 0,
+              tax_percent: 0,
+              tax_amount: 0,
+              discount_amount: 0,
+              total: 0,
+              posted_at: new Date().toISOString(),
+              posted_by: user?.full_name || 'Front Desk',
+            });
+          }
+        } else {
+          // Collect payment to settle zero balance
+          if (folio) {
+            await folioService.addPaymentAsync({
+              hotel_id: hotelId,
+              folio_id: folio.id,
+              guest_id: checkOutRes.guest_id,
+              reservation_id: checkOutRes.id,
+              amount: outstanding,
+              method: settlementMethod,
+              reference: `SETTLE-${Date.now().toString().slice(-6)}`,
+              notes: `Full checkout settlement (${settlementMethod})`,
+              received_by: user?.full_name || 'Front Desk',
+            });
+          }
         }
       }
+
+      await reservationService.checkOutAsync(checkOutRes.id);
+      setReservations([...reservationService.getAll(hotelId)]);
+      setRooms([...roomService.getAll(hotelId)]);
+      activityLogService.log({
+        hotel_id: hotelId,
+        user_id: user?.id,
+        actor_name: user?.full_name,
+        action: 'CHECK_OUT',
+        entity_type: 'reservation',
+        entity_id: checkOutRes.id,
+        metadata: { 
+          guest: `${checkOutRes.guest?.first_name} ${checkOutRes.guest?.last_name}`,
+          city_ledger: isCityLedgerOverride ? corporateAccountName : null,
+          settled_amount: isCityLedgerOverride ? 0 : outstanding,
+        }
+      });
+      setCheckOutRes(null);
+      setIsCityLedgerOverride(false);
+      setCorporateAccountName('');
+      toast.success('Check-out completed', `Reservation #${checkOutRes.id.slice(-6).toUpperCase()} checked out`);
+    } catch (err: any) {
+      console.error('Check-out failed:', err);
+      const msg = err?.message || 'Database write rejected checkout. Please try again.';
+      setCheckoutError(msg);
+      toast.error('Check-out failed', msg);
+    } finally {
+      setIsSubmittingCheckout(false);
     }
-
-    reservationService.checkOut(checkOutRes.id);
-    setReservations([...reservationService.getAll(hotelId)]);
-    setRooms([...roomService.getAll(hotelId)]);
-    activityLogService.log({
-      hotel_id: hotelId,
-      user_id: user?.id,
-      actor_name: user?.full_name,
-      action: 'CHECK_OUT',
-      entity_type: 'reservation',
-      entity_id: checkOutRes.id,
-      metadata: { 
-        guest: `${checkOutRes.guest?.first_name} ${checkOutRes.guest?.last_name}`,
-        city_ledger: isCityLedgerOverride ? corporateAccountName : null,
-        settled_amount: isCityLedgerOverride ? 0 : outstanding,
-      }
-    });
-    setCheckOutRes(null);
-    setIsCityLedgerOverride(false);
-    setCorporateAccountName('');
   };
 
   // Handle New Reservation submission
-  const handleCreateReservation = (e: React.FormEvent) => {
+  const handleCreateReservation = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingRes) return;
+    setResError(null);
     let guestId = newResForm.guestId;
 
-    // Create guest if not selected
-    if (!guestId && newResForm.newGuestFirstName && newResForm.newGuestPhone) {
-      const g = guestService.create({
+    setIsSubmittingRes(true);
+    try {
+      // Create guest if not selected
+      if (!guestId && newResForm.newGuestFirstName && newResForm.newGuestPhone) {
+        const g = guestService.create({
+          hotel_id: hotelId,
+          first_name: newResForm.newGuestFirstName,
+          last_name: newResForm.newGuestLastName || '',
+          phone: newResForm.newGuestPhone,
+          email: newResForm.newGuestEmail,
+          vip_status: false,
+        });
+        guestId = g.id;
+        setGuests([...guestService.getAll(hotelId)]);
+      }
+
+      if (!guestId) {
+        throw new Error('Please select or specify a guest for the reservation.');
+      }
+
+      const nights = calcNights(newResForm.checkInDate, newResForm.checkOutDate);
+      const subtotal = nights * newResForm.ratePerNight;
+      const tax = Math.round(subtotal * 0.18);
+      const total = subtotal + tax;
+
+      await reservationService.createAsync({
         hotel_id: hotelId,
-        first_name: newResForm.newGuestFirstName,
-        last_name: newResForm.newGuestLastName || '',
-        phone: newResForm.newGuestPhone,
-        email: newResForm.newGuestEmail,
-        vip_status: false,
+        guest_id: guestId,
+        room_type_id: newResForm.roomTypeId,
+        status: 'CONFIRMED',
+        source: newResForm.source,
+        external_booking_id: newResForm.externalBookingId || undefined,
+        check_in_date: newResForm.checkInDate,
+        check_out_date: newResForm.checkOutDate,
+        adults: Number(newResForm.adults),
+        children: Number(newResForm.children),
+        nights,
+        rate_per_night: Number(newResForm.ratePerNight),
+        total_amount: total,
+        tax_amount: tax,
+        discount_amount: 0,
+        deposit_amount: 0,
+        notes: newResForm.notes,
       });
-      guestId = g.id;
-      setGuests([...guestService.getAll(hotelId)]);
+
+      setReservations([...reservationService.getAll(hotelId)]);
+      setIsNewResOpen(false);
+      toast.success('Reservation created', 'Room reservation registered and synced');
+    } catch (err: any) {
+      console.error('Reservation creation failed:', err);
+      const msg = err?.message || 'Database rejected reservation write. Please try again.';
+      setResError(msg);
+      toast.error('Reservation creation failed', msg);
+    } finally {
+      setIsSubmittingRes(false);
     }
-
-    if (!guestId) return;
-
-    const nights = calcNights(newResForm.checkInDate, newResForm.checkOutDate);
-    const subtotal = nights * newResForm.ratePerNight;
-    const tax = Math.round(subtotal * 0.18);
-    const total = subtotal + tax;
-
-    reservationService.create({
-      hotel_id: hotelId,
-      guest_id: guestId,
-      room_type_id: newResForm.roomTypeId,
-      status: 'CONFIRMED',
-      source: newResForm.source,
-      external_booking_id: newResForm.externalBookingId || undefined,
-      check_in_date: newResForm.checkInDate,
-      check_out_date: newResForm.checkOutDate,
-      adults: Number(newResForm.adults),
-      children: Number(newResForm.children),
-      nights,
-      rate_per_night: Number(newResForm.ratePerNight),
-      total_amount: total,
-      tax_amount: tax,
-      discount_amount: 0,
-      deposit_amount: 0,
-      notes: newResForm.notes,
-    });
-
-    setReservations([...reservationService.getAll(hotelId)]);
-    setIsNewResOpen(false);
   };
 
   return (
@@ -413,28 +451,37 @@ export default function ReservationsPage() {
             size="md"
             footer={
               <div className="flex justify-end gap-2 w-full">
-                <Button variant="outline" onClick={() => setCheckOutRes(null)}>Back</Button>
+                <Button variant="outline" onClick={() => setCheckOutRes(null)} disabled={isSubmittingCheckout}>Back</Button>
                 {outstandingBalance > 0 && !isCityLedgerOverride ? (
                   <Button 
                     variant="primary" 
                     onClick={handleConfirmCheckout}
+                    disabled={isSubmittingCheckout}
                     className="bg-emerald-700 hover:bg-emerald-800 text-white"
                   >
-                    Collect ₹{outstandingBalance.toLocaleString('en-IN')} & Checkout
+                    {isSubmittingCheckout ? 'Collecting & Settling...' : `Collect ₹${outstandingBalance.toLocaleString('en-IN')} & Checkout`}
                   </Button>
                 ) : (
                   <Button 
                     variant="danger" 
                     onClick={handleConfirmCheckout}
-                    disabled={outstandingBalance > 0 && isCityLedgerOverride && !corporateAccountName.trim()}
+                    disabled={isSubmittingCheckout || (outstandingBalance > 0 && isCityLedgerOverride && !corporateAccountName.trim())}
                   >
-                    {isCityLedgerOverride ? 'Authorize City Ledger & Checkout' : 'Complete Checkout'}
+                    {isSubmittingCheckout 
+                      ? 'Processing Checkout...' 
+                      : (isCityLedgerOverride ? 'Authorize City Ledger & Checkout' : 'Complete Checkout')}
                   </Button>
                 )}
               </div>
             }
           >
             <div className="space-y-4">
+              {checkoutError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2 text-xs text-red-700">
+                  <span className="font-bold">Error:</span>
+                  <span>{checkoutError}</span>
+                </div>
+              )}
               <div className="p-4 rounded-xl bg-stone-50 border border-stone-200 text-sm space-y-1">
                 <div className="font-bold text-stone-900">
                   {checkOutRes.guest?.first_name} {checkOutRes.guest?.last_name}
@@ -535,17 +582,25 @@ export default function ReservationsPage() {
       {/* New Reservation Modal */}
       <Modal
         isOpen={isNewResOpen}
-        onClose={() => setIsNewResOpen(false)}
+        onClose={() => !isSubmittingRes && setIsNewResOpen(false)}
         title="Create New Reservation"
         size="lg"
         footer={
           <div className="flex justify-end gap-2 w-full">
-            <Button variant="outline" onClick={() => setIsNewResOpen(false)}>Cancel</Button>
-            <Button variant="primary" onClick={handleCreateReservation}>Confirm Reservation</Button>
+            <Button variant="outline" onClick={() => setIsNewResOpen(false)} disabled={isSubmittingRes}>Cancel</Button>
+            <Button variant="primary" onClick={handleCreateReservation} disabled={isSubmittingRes}>
+              {isSubmittingRes ? 'Confirming...' : 'Confirm Reservation'}
+            </Button>
           </div>
         }
       >
-        <form className="space-y-4">
+        <form className="space-y-4" onSubmit={handleCreateReservation}>
+          {resError && (
+            <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2 text-xs text-red-700">
+              <span className="font-bold">Error:</span>
+              <span>{resError}</span>
+            </div>
+          )}
           {/* Guest selection or creation */}
           <div className="space-y-2">
             <label className="block text-xs font-bold uppercase tracking-wider text-stone-700">

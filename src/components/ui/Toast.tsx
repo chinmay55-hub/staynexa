@@ -37,12 +37,19 @@ const ToastContext = createContext<ToastContextValue | null>(null);
 
 // ─── useToast ──────────────────────────────────────────────────────────────────
 
+const NOOP_TOAST: ToastContextValue = {
+  toasts: [],
+  addToast: () => '',
+  removeToast: () => {},
+  success: () => {},
+  error: () => {},
+  warning: () => {},
+  info: () => {},
+};
+
 export function useToast(): ToastContextValue {
   const ctx = useContext(ToastContext);
-  if (!ctx) {
-    throw new Error('useToast must be used within a <ToastProvider>');
-  }
-  return ctx;
+  return ctx || NOOP_TOAST;
 }
 
 // ─── ToastProvider ─────────────────────────────────────────────────────────────

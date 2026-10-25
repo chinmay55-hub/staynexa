@@ -24,6 +24,7 @@ import {
   roomService, 
   staffService, 
   qrService, 
+  serviceRequestService,
   DEMO_HOTELS,
   DEMO_HOTEL_BRANDING,
   DEMO_HOTEL_SETTINGS
@@ -56,7 +57,7 @@ export default function HotelOnboardingPage() {
   const [hotelInfo, setHotelInfo] = useState({
     name: 'The Royal Haveli Heritage',
     legal_name: 'Haveli Hospitality Group LLP',
-    type: 'HOTEL' as const,
+    type: 'HOTEL' as Hotel['type'],
     address: 'Circular Road, Near Clock Tower',
     city: 'Jaipur',
     state: 'Rajasthan',
@@ -127,8 +128,76 @@ export default function HotelOnboardingPage() {
   const [autoGenerateQrs, setAutoGenerateQrs] = useState(true);
   const [activatedHotelId, setActivatedHotelId] = useState<string | null>(null);
 
-  // Restore draft from localStorage if present
+  // Restore existing hotel data if hotelId param is present, otherwise load draft
   useEffect(() => {
+    if (hotelId) {
+      const existing = hotelService.getById(hotelId);
+      if (existing) {
+        setHotelInfo({
+          name: existing.name,
+          legal_name: existing.legal_name || '',
+          type: existing.type || 'HOTEL',
+          address: existing.address || '',
+          city: existing.city || '',
+          state: existing.state || '',
+          country: existing.country || 'India',
+          pin_code: existing.pin_code || '',
+          phone: existing.phone || '',
+          email: existing.email || '',
+          gstin: existing.gstin || '',
+          currency: existing.currency || 'INR',
+          timezone: existing.timezone || 'Asia/Kolkata',
+          check_in_time: existing.check_in_time || '14:00',
+          check_out_time: existing.check_out_time || '12:00',
+        });
+        const existingBranding = hotelService.getBranding(hotelId);
+        if (existingBranding) {
+          setBranding({
+            primary_color: existingBranding.primary_color,
+            accent_color: existingBranding.accent_color,
+            tagline: existingBranding.tagline || '',
+          });
+        }
+        const existingSettings = hotelService.getSettings(hotelId);
+        if (existingSettings) {
+          setConfig({
+            wifi_name: existingSettings.wifi_name || '',
+            wifi_password: existingSettings.wifi_password || '',
+            invoice_prefix: existingSettings.invoice_prefix || 'INV',
+            default_tax_percent: existingSettings.default_tax_percent || 18,
+            service_charge_percent: existingSettings.service_charge_percent || 5,
+            allow_room_charge: existingSettings.allow_room_charge ?? true,
+          });
+        }
+        const existingRoomTypes = roomService.getTypes(hotelId);
+        if (existingRoomTypes.length > 0) {
+          setRoomTypes(existingRoomTypes.map(rt => ({
+            name: rt.name,
+            code: rt.code,
+            rate: rt.base_rate,
+            max_adults: rt.max_adults,
+            amenities: (rt.amenities || []).join(', '),
+          })));
+        }
+        const existingRooms = roomService.getAll(hotelId);
+        if (existingRooms.length > 0) {
+          setRooms(existingRooms.map(r => ({
+            number: r.number,
+            floor: r.floor || 1,
+            type_code: existingRoomTypes.find(rt => rt.id === r.room_type_id)?.code || 'STD',
+          })));
+        }
+        const existingDepts = staffService.getDepartments(hotelId);
+        if (existingDepts.length > 0) {
+          setDepartments(existingDepts.map(d => ({
+            name: d.name,
+            code: d.code,
+          })));
+        }
+        return;
+      }
+    }
+
     try {
       const saved = localStorage.getItem('staynexa_onboarding_draft');
       if (saved) {
@@ -138,7 +207,7 @@ export default function HotelOnboardingPage() {
         if (parsed.config) setConfig(parsed.config);
       }
     } catch {}
-  }, []);
+  }, [hotelId]);
 
   const saveDraft = () => {
     try {
@@ -162,62 +231,133 @@ export default function HotelOnboardingPage() {
   };
 
   const handleActivate = () => {
-    // 1. Create Hotel Tenant
-    const newHotel = hotelService.create({
-      ...hotelInfo,
-      slug: hotelInfo.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-      status: 'ACTIVE',
-      total_rooms: rooms.length,
-    });
+    let targetHotelId = hotelId;
+
+    if (targetHotelId) {
+      // Update existing Hotel Tenant
+      hotelService.update(targetHotelId, {
+        ...hotelInfo,
+        total_rooms: rooms.length,
+        updated_at: new Date().toISOString(),
+      });
+    } else {
+      // 1. Create Hotel Tenant
+      const newHotel = hotelService.create({
+        ...hotelInfo,
+        slug: hotelInfo.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+        status: 'ACTIVE',
+        total_rooms: rooms.length,
+      });
+      targetHotelId = newHotel.id;
+    }
 
     // 2. Set Branding & Settings
-    hotelService.updateBranding(newHotel.id, {
-      hotel_id: newHotel.id,
+    hotelService.updateBranding(targetHotelId, {
+      hotel_id: targetHotelId,
       ...branding,
     });
 
-    hotelService.updateSettings(newHotel.id, {
-      hotel_id: newHotel.id,
+    hotelService.updateSettings(targetHotelId, {
+      hotel_id: targetHotelId,
       ...config,
     });
 
     // 3. Create Room Types
+    const existingTypes = roomService.getTypes(targetHotelId);
     const createdTypes: { [code: string]: RoomType } = {};
+    existingTypes.forEach(rt => { createdTypes[rt.code] = rt; });
+
     roomTypes.forEach(rt => {
-      const created = roomService.createType({
-        hotel_id: newHotel.id,
-        name: rt.name,
-        code: rt.code,
-        base_rate: rt.rate,
-        max_adults: rt.max_adults,
-        max_children: 1,
-        amenities: rt.amenities.split(',').map(s => s.trim()),
-        images: [],
-        is_active: true,
-      });
-      createdTypes[rt.code] = created;
-    });
-
-    // 4. Create Rooms
-    rooms.forEach(r => {
-      const roomType = createdTypes[r.type_code] || Object.values(createdTypes)[0];
-      const createdRoom = roomService.create({
-        hotel_id: newHotel.id,
-        number: r.number,
-        floor: r.floor,
-        room_type_id: roomType.id,
-        status: 'AVAILABLE',
-        housekeeping_status: 'CLEAN',
-        is_active: true,
-      });
-
-      // 5. Generate QRs
-      if (autoGenerateQrs) {
-        qrService.generate(newHotel.id, createdRoom.id);
+      if (!createdTypes[rt.code]) {
+        const created = roomService.createType({
+          hotel_id: targetHotelId!,
+          name: rt.name,
+          code: rt.code,
+          base_rate: rt.rate,
+          max_adults: rt.max_adults,
+          max_children: 1,
+          amenities: rt.amenities.split(',').map(s => s.trim()),
+          images: [],
+          is_active: true,
+        });
+        createdTypes[rt.code] = created;
       }
     });
 
-    setActivatedHotelId(newHotel.id);
+    // 4. Create Rooms
+    const existingRooms = roomService.getAll(targetHotelId);
+    rooms.forEach(r => {
+      const roomType = createdTypes[r.type_code] || Object.values(createdTypes)[0];
+      const alreadyExists = existingRooms.some(ex => ex.number === r.number);
+      if (!alreadyExists && roomType) {
+        const createdRoom = roomService.create({
+          hotel_id: targetHotelId!,
+          number: r.number,
+          floor: r.floor,
+          room_type_id: roomType.id,
+          status: 'AVAILABLE',
+          housekeeping_status: 'CLEAN',
+          is_active: true,
+        });
+
+        // 5. Generate QRs
+        if (autoGenerateQrs) {
+          qrService.generate(targetHotelId!, createdRoom.id);
+        }
+      }
+    });
+
+    // 6. Create Departments
+    const existingDepts = staffService.getDepartments(targetHotelId);
+    departments.forEach(d => {
+      if (!existingDepts.some(ed => ed.code.toLowerCase() === d.code.toLowerCase())) {
+        staffService.createDepartment({
+          hotel_id: targetHotelId!,
+          name: d.name,
+          code: d.code,
+          description: `${d.name} Department`,
+        });
+      }
+    });
+
+    // 7. Create Primary Admin User
+    if (adminUser.email) {
+      let adminProfile = staffService.getByEmail(adminUser.email);
+      if (!adminProfile) {
+        adminProfile = staffService.createProfile({
+          full_name: adminUser.full_name || 'Hotel Admin',
+          email: adminUser.email,
+          phone: adminUser.phone || '',
+          role: 'HOTEL_ADMIN',
+          is_active: true,
+        });
+      }
+      const existingMemberships = staffService.getAllMemberships();
+      if (!existingMemberships.some(m => m.user_id === adminProfile!.user_id && m.hotel_id === targetHotelId)) {
+        staffService.createMembership({
+          hotel_id: targetHotelId!,
+          user_id: adminProfile.user_id,
+          role: 'HOTEL_ADMIN',
+          is_active: true,
+        });
+      }
+    }
+
+    // 8. Provision Initial Services
+    const existingServices = serviceRequestService.getServices(targetHotelId);
+    services.forEach(s => {
+      if (!existingServices.some(es => es.name.toLowerCase() === s.name.toLowerCase())) {
+        serviceRequestService.createService({
+          hotel_id: targetHotelId!,
+          name: s.name,
+          category: s.category.toUpperCase(),
+          is_available: true,
+          requires_scheduling: false,
+        });
+      }
+    });
+
+    setActivatedHotelId(targetHotelId);
     localStorage.removeItem('staynexa_onboarding_draft');
   };
 

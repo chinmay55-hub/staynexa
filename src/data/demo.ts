@@ -449,14 +449,15 @@ export const DEMO_QR_CODES: QRCode[] = [
   { id: 'qr-001', hotel_id: 'hotel-001', room_id: 'room-001', token: 'gp-r101-abc123', url: '/q/gp-r101-abc123', type: 'ROOM', is_active: true, created_at: '2024-01-16T10:00:00Z' },
   { id: 'qr-002', hotel_id: 'hotel-001', room_id: 'room-002', token: 'gp-r102-def456', url: '/q/gp-r102-def456', type: 'ROOM', is_active: true, created_at: '2024-01-16T10:00:00Z' },
   { id: 'qr-003', hotel_id: 'hotel-003', room_id: 'room-201', token: 'ac-v01-ghi789', url: '/q/ac-v01-ghi789', type: 'ROOM', is_active: true, created_at: '2024-03-11T10:00:00Z' },
+  { id: 'qr-004', hotel_id: 'hotel-001', room_id: 'room-003', token: 'gp-r103-inactive', url: '/q/gp-r103-inactive', type: 'ROOM', is_active: false, created_at: '2024-01-16T10:00:00Z' },
 ];
 
 // ─── Notifications ────────────────────────────────────────────────────────────
 
 export const DEMO_NOTIFICATIONS: Notification[] = [
   { id: 'notif-001', hotel_id: 'hotel-001', user_id: 'user-002', type: 'NEW_ORDER', title: 'New Room Service Order', message: 'Order #ord-003 received from Room 202', is_read: false, link: '/reception/orders', created_at: new Date(Date.now() - 180000).toISOString() },
-  { id: 'notif-002', hotel_id: 'hotel-001', user_id: 'user-002', type: 'MAINTENANCE', title: 'Maintenance Request', message: 'New maintenance ticket: Tap dripping in Room 102', is_read: false, link: '/reception/maintenance', created_at: `${today}T10:00:00Z` },
-  { id: 'notif-003', hotel_id: 'hotel-001', user_id: 'user-002', type: 'ARRIVAL', title: 'Guest Arriving Today', message: 'Rahul Gupta checks in today. Room not yet assigned.', is_read: true, link: '/reception/reservations', created_at: `${today}T08:00:00Z` },
+  { id: 'notif-002', hotel_id: 'hotel-001', user_id: 'user-002', type: 'MAINTENANCE', title: 'Maintenance Request', message: 'New maintenance ticket: Tap dripping in Room 102', is_read: false, link: '/reception/maintenance', created_at: new Date(Date.now() - 3600000).toISOString() },
+  { id: 'notif-003', hotel_id: 'hotel-001', user_id: 'user-002', type: 'ARRIVAL', title: 'Guest Arriving Today', message: 'Rahul Gupta checks in today. Room not yet assigned.', is_read: true, link: '/reception/reservations', created_at: new Date(Date.now() - 7200000).toISOString() },
 ];
 
 // ─── Activity Logs ────────────────────────────────────────────────────────────

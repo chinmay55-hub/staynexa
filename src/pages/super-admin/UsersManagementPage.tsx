@@ -1,16 +1,29 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Users, Search, Plus, Mail, Phone, Building, ShieldCheck, CheckCircle2, XCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, Button, Input, Select, Badge, Modal } from '../../components/ui';
-import { DEMO_PROFILES, DEMO_HOTELS, DEMO_MEMBERSHIPS } from '../../data/demo';
-import type { Profile, UserRole } from '../../types';
+import { staffService, hotelService, reloadDemoStoreFromStorage } from '../../services/demoDataService';
+import type { Profile, UserRole, Hotel, HotelMembership } from '../../types';
 
 export default function UsersManagementPage() {
-  const [users, setUsers] = useState<Profile[]>(() => DEMO_PROFILES);
-  const [hotels] = useState(() => DEMO_HOTELS);
-  const [memberships] = useState(() => DEMO_MEMBERSHIPS);
+  const [users, setUsers] = useState<Profile[]>(() => staffService.getAllProfiles());
+  const [hotels, setHotels] = useState<Hotel[]>(() => hotelService.getAll());
+  const [memberships, setMemberships] = useState<HotelMembership[]>(() => staffService.getAllMemberships());
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('ALL');
   const [hotelFilter, setHotelFilter] = useState('ALL');
+
+  useEffect(() => {
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'staynexa_demo_store' || e.key === 'staynexa_global_sync') {
+        reloadDemoStoreFromStorage();
+        setUsers([...staffService.getAllProfiles()]);
+        setHotels([...hotelService.getAll()]);
+        setMemberships([...staffService.getAllMemberships()]);
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, []);
 
   // New user modal
   const [isAddOpen, setIsAddOpen] = useState(false);
@@ -34,30 +47,39 @@ export default function UsersManagementPage() {
   });
 
   const handleToggleStatus = (userId: string) => {
-    setUsers(prev => prev.map(u => u.id === userId ? { ...u, is_active: !u.is_active } : u));
+    const userToToggle = users.find(u => u.id === userId || u.user_id === userId);
+    if (!userToToggle) return;
+    staffService.updateProfile(userToToggle.user_id, { is_active: !userToToggle.is_active });
+    setUsers([...staffService.getAllProfiles()]);
   };
 
   const handleCreateUser = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newUser.full_name || !newUser.email) return;
-    const created: Profile = {
-      id: `user-${Date.now()}`,
-      user_id: `user-${Date.now()}`,
+    const createdProfile = staffService.createProfile({
       full_name: newUser.full_name,
       email: newUser.email,
       phone: newUser.phone,
       role: newUser.role,
       is_active: true,
-      created_at: new Date().toISOString(),
-    };
-    setUsers(prev => [...prev, created]);
+    });
+    if (newUser.role !== 'SUPER_ADMIN' && newUser.hotel_id) {
+      staffService.createMembership({
+        hotel_id: newUser.hotel_id,
+        user_id: createdProfile.user_id,
+        role: newUser.role,
+        is_active: true,
+      });
+    }
+    setUsers([...staffService.getAllProfiles()]);
+    setMemberships([...staffService.getAllMemberships()]);
     setIsAddOpen(false);
     setNewUser({
       full_name: '',
       email: '',
       phone: '',
       role: 'RECEPTION',
-      hotel_id: 'hotel-001',
+      hotel_id: hotels[0]?.id || 'hotel-001',
     });
   };
 

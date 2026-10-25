@@ -44,7 +44,8 @@ import {
   Input, 
   Select, 
   RoomStatusBadge, 
-  HousekeepingBadge 
+  HousekeepingBadge,
+  useToast
 } from '../ui';
 
 export interface RoomActionConsoleModalProps {
@@ -125,6 +126,23 @@ export function RoomActionConsoleModal({
   const [servicePriority, setServicePriority] = useState<Priority>('MEDIUM');
   const [serviceNotes, setServiceNotes] = useState('');
   const [serviceSuccessMsg, setServiceSuccessMsg] = useState<string | null>(null);
+
+  // Async Mutation & Error States
+  const toast = useToast();
+  const [isSubmittingBooking, setIsSubmittingBooking] = useState(false);
+  const [bookingError, setBookingError] = useState<string | null>(null);
+
+  const [isSubmittingCharge, setIsSubmittingCharge] = useState(false);
+  const [chargeError, setChargeError] = useState<string | null>(null);
+
+  const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+
+  const [isSubmittingCheckout, setIsSubmittingCheckout] = useState(false);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
+
+  const [isSubmittingService, setIsSubmittingService] = useState(false);
+  const [serviceError, setServiceError] = useState<string | null>(null);
 
   const refreshRoomData = useCallback((roomId: string) => {
     const updated = roomService.getById(roomId);
@@ -210,39 +228,51 @@ export function RoomActionConsoleModal({
   const estimatedTotal = estimatedStayTariff + estimatedGst;
 
   // Handlers for Room Housekeeping & Operational condition
-  const handleUpdateHousekeeping = (newHk: HousekeepingStatus) => {
-    const updated = roomService.updateStatus(currentRoom.id, currentRoom.status, newHk);
-    if (updated) {
-      setCurrentRoom(updated);
-      onRoomUpdated?.(updated);
-      activityLogService.log({
-        hotel_id: hotelId,
-        user_id: user?.id,
-        actor_name: user?.full_name || 'Front Desk',
-        action: 'UPDATE_HOUSEKEEPING',
-        entity_type: 'room',
-        entity_id: currentRoom.id,
-        metadata: { room: currentRoom.number, new_status: newHk }
-      });
+  const handleUpdateHousekeeping = async (newHk: HousekeepingStatus) => {
+    try {
+      const updated = await roomService.updateStatusAsync(currentRoom.id, currentRoom.status, newHk);
+      if (updated) {
+        setCurrentRoom(updated);
+        onRoomUpdated?.(updated);
+        activityLogService.log({
+          hotel_id: hotelId,
+          user_id: user?.id,
+          actor_name: user?.full_name || 'Front Desk',
+          action: 'UPDATE_HOUSEKEEPING',
+          entity_type: 'room',
+          entity_id: currentRoom.id,
+          metadata: { room: currentRoom.number, new_status: newHk }
+        });
+        toast.success(`Room ${currentRoom.number} housekeeping updated to ${newHk}`);
+      }
+    } catch (err: any) {
+      toast.error('Housekeeping update failed', err?.message || 'Database rejected status change');
     }
   };
 
-  const handleUpdateStatus = (newStatus: RoomStatus) => {
-    const updated = roomService.updateStatus(currentRoom.id, newStatus, currentRoom.housekeeping_status);
-    if (updated) {
-      setCurrentRoom(updated);
-      onRoomUpdated?.(updated);
+  const handleUpdateStatus = async (newStatus: RoomStatus) => {
+    try {
+      const updated = await roomService.updateStatusAsync(currentRoom.id, newStatus, currentRoom.housekeeping_status);
+      if (updated) {
+        setCurrentRoom(updated);
+        onRoomUpdated?.(updated);
+        toast.success(`Room ${currentRoom.number} status updated to ${newStatus}`);
+      }
+    } catch (err: any) {
+      toast.error('Room status update failed', err?.message || 'Database rejected status change');
     }
   };
 
   // Handlers for Advance Booking
-  const handleCreateReservation = (e: React.FormEvent) => {
+  const handleCreateReservation = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingBooking) return;
+    setBookingError(null);
     let guestIdToUse = selectedGuestId;
 
     if (resMode === 'new') {
       if (!newGuest.firstName.trim() || !newGuest.phone.trim()) {
-        alert('Please fill in Guest First Name and Contact Phone Number.');
+        setBookingError('Please fill in Guest First Name and Contact Phone Number.');
         return;
       }
       const createdGuest = guestService.create({
@@ -260,191 +290,245 @@ export function RoomActionConsoleModal({
     }
 
     if (!guestIdToUse) {
-      alert('Please select or specify a guest for this reservation.');
+      setBookingError('Please select or specify a guest for this reservation.');
       return;
     }
 
-    const createdRes = reservationService.create({
-      hotel_id: hotelId,
-      guest_id: guestIdToUse,
-      room_type_id: currentRoom.room_type_id,
-      room_id: currentRoom.id,
-      check_in_date: checkInDate,
-      check_out_date: checkOutDate,
-      nights: calculatedNights,
-      adults: Number(adults),
-      children: Number(childrenCount),
-      rate_per_night: Number(ratePerNight),
-      total_amount: estimatedTotal,
-      tax_amount: estimatedGst,
-      discount_amount: 0,
-      deposit_amount: 0,
-      source: bookingSource,
-      external_booking_id: externalRef || undefined,
-      notes: specialNotes || undefined,
-      status: 'CONFIRMED',
-    });
+    setIsSubmittingBooking(true);
+    try {
+      const createdRes = await reservationService.createAsync({
+        hotel_id: hotelId,
+        guest_id: guestIdToUse,
+        room_type_id: currentRoom.room_type_id,
+        room_id: currentRoom.id,
+        check_in_date: checkInDate,
+        check_out_date: checkOutDate,
+        nights: calculatedNights,
+        adults: Number(adults),
+        children: Number(childrenCount),
+        rate_per_night: Number(ratePerNight),
+        total_amount: estimatedTotal,
+        tax_amount: estimatedGst,
+        discount_amount: 0,
+        deposit_amount: 0,
+        source: bookingSource,
+        external_booking_id: externalRef || undefined,
+        notes: specialNotes || undefined,
+        status: 'CONFIRMED',
+      });
 
-    activityLogService.log({
-      hotel_id: hotelId,
-      user_id: user?.id,
-      actor_name: user?.full_name || 'Front Desk',
-      action: 'CREATE_RESERVATION',
-      entity_type: 'reservation',
-      entity_id: createdRes.id,
-      metadata: { room: currentRoom.number, guest_id: guestIdToUse, nights: calculatedNights }
-    });
+      activityLogService.log({
+        hotel_id: hotelId,
+        user_id: user?.id,
+        actor_name: user?.full_name || 'Front Desk',
+        action: 'CREATE_RESERVATION',
+        entity_type: 'reservation',
+        entity_id: createdRes.id,
+        metadata: { room: currentRoom.number, guest_id: guestIdToUse, nights: calculatedNights }
+      });
 
-    setResSuccessMessage(`Reservation #${createdRes.id.slice(-6).toUpperCase()} successfully confirmed & locked for Room ${currentRoom.number}!`);
-    refreshRoomData(currentRoom.id);
+      setResSuccessMessage(`Reservation #${createdRes.id.slice(-6).toUpperCase()} successfully confirmed & locked for Room ${currentRoom.number}!`);
+      toast.success('Reservation confirmed', `Locked for Room ${currentRoom.number}`);
+      refreshRoomData(currentRoom.id);
+    } catch (err: any) {
+      const msg = err?.message || 'Database write rejected reservation. Please try again.';
+      setBookingError(msg);
+      toast.error('Reservation creation failed', msg);
+    } finally {
+      setIsSubmittingBooking(false);
+    }
   };
 
   // Handlers for Live Folio charges & payments
-  const handleAddFolioCharge = (e: React.FormEvent) => {
+  const handleAddFolioCharge = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!folio || !chargeDesc.trim() || chargeAmount <= 0) return;
+    if (!folio || !chargeDesc.trim() || chargeAmount <= 0 || isSubmittingCharge) return;
+    setChargeError(null);
+    setIsSubmittingCharge(true);
 
-    const taxAmt = Math.round((chargeAmount * chargeTaxPercent) / 100);
-    const totalAmt = chargeAmount + taxAmt;
+    try {
+      const taxAmt = Math.round((chargeAmount * chargeTaxPercent) / 100);
+      const totalAmt = chargeAmount + taxAmt;
 
-    folioService.addItem({
-      hotel_id: hotelId,
-      folio_id: folio.id,
-      description: chargeDesc.trim(),
-      category: chargeCategory,
-      quantity: 1,
-      unit_price: chargeAmount,
-      tax_percent: chargeTaxPercent,
-      tax_amount: taxAmt,
-      discount_amount: 0,
-      total: totalAmt,
-      posted_at: new Date().toISOString(),
-      posted_by: user?.full_name || 'Front Desk'
-    });
+      await folioService.addItemAsync({
+        hotel_id: hotelId,
+        folio_id: folio.id,
+        description: chargeDesc.trim(),
+        category: chargeCategory,
+        quantity: 1,
+        unit_price: chargeAmount,
+        tax_percent: chargeTaxPercent,
+        tax_amount: taxAmt,
+        discount_amount: 0,
+        total: totalAmt,
+        posted_at: new Date().toISOString(),
+        posted_by: user?.full_name || 'Front Desk'
+      });
 
-    setIsAddChargeOpen(false);
-    setChargeDesc('');
-    setChargeAmount(500);
-    refreshRoomData(currentRoom.id);
+      setIsAddChargeOpen(false);
+      setChargeDesc('');
+      setChargeAmount(500);
+      toast.success('Charge posted to room folio', `Added ₹${totalAmt}`);
+      refreshRoomData(currentRoom.id);
+    } catch (err: any) {
+      const msg = err?.message || 'Database write failed. Charge could not be posted.';
+      setChargeError(msg);
+      toast.error('Post charge failed', msg);
+    } finally {
+      setIsSubmittingCharge(false);
+    }
   };
 
-  const handleAddFolioPayment = (e: React.FormEvent) => {
+  const handleAddFolioPayment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!folio || payAmount <= 0) return;
+    if (!folio || payAmount <= 0 || isSubmittingPayment) return;
+    setPaymentError(null);
+    setIsSubmittingPayment(true);
 
-    folioService.addPayment({
-      hotel_id: hotelId,
-      folio_id: folio.id,
-      guest_id: folio.guest_id,
-      reservation_id: folio.reservation_id,
-      amount: Number(payAmount),
-      method: payMethod,
-      reference: payReference || `PAY-${Date.now().toString().slice(-6)}`,
-      notes: `Payment collected at Room Console (${payMethod})`,
-      received_by: user?.full_name || 'Front Desk'
-    });
+    try {
+      await folioService.addPaymentAsync({
+        hotel_id: hotelId,
+        folio_id: folio.id,
+        guest_id: folio.guest_id,
+        reservation_id: folio.reservation_id,
+        amount: Number(payAmount),
+        method: payMethod,
+        reference: payReference || `PAY-${Date.now().toString().slice(-6)}`,
+        notes: `Payment collected at Room Console (${payMethod})`,
+        received_by: user?.full_name || 'Front Desk'
+      });
 
-    setIsAddPaymentOpen(false);
-    setPayReference('');
-    refreshRoomData(currentRoom.id);
+      setIsAddPaymentOpen(false);
+      setPayReference('');
+      toast.success('Payment recorded', `Collected ₹${payAmount} via ${payMethod}`);
+      refreshRoomData(currentRoom.id);
+    } catch (err: any) {
+      const msg = err?.message || 'Database rejected payment write.';
+      setPaymentError(msg);
+      toast.error('Record payment failed', msg);
+    } finally {
+      setIsSubmittingPayment(false);
+    }
   };
 
   // Handlers for Quick Check-Out
-  const handlePerformCheckOut = () => {
-    if (!activeReservation || !folio) return;
+  const handlePerformCheckOut = async () => {
+    if (!activeReservation || !folio || isSubmittingCheckout) return;
+    setCheckoutError(null);
+    setIsSubmittingCheckout(true);
 
-    // If balance is outstanding and not city ledger, collect payment first
-    if (folio.outstanding > 0) {
-      if (isCityLedger) {
-        if (!corporateAccount.trim()) {
-          alert('Please specify the Corporate Account Name for City Ledger transfer.');
-          return;
+    try {
+      // If balance is outstanding and not city ledger, collect payment first
+      if (folio.outstanding > 0) {
+        if (isCityLedger) {
+          if (!corporateAccount.trim()) {
+            throw new Error('Please specify the Corporate Account Name for City Ledger transfer.');
+          }
+          await folioService.addPaymentAsync({
+            hotel_id: hotelId,
+            folio_id: folio.id,
+            guest_id: folio.guest_id,
+            reservation_id: folio.reservation_id,
+            amount: folio.outstanding,
+            method: 'OTHER',
+            reference: `CITY-LEDGER-${corporateAccount.trim().toUpperCase()}`,
+            notes: `Billed to Corporate City Ledger: ${corporateAccount.trim()}`,
+            received_by: user?.full_name || 'Front Desk'
+          });
+        } else {
+          await folioService.addPaymentAsync({
+            hotel_id: hotelId,
+            folio_id: folio.id,
+            guest_id: folio.guest_id,
+            reservation_id: folio.reservation_id,
+            amount: folio.outstanding,
+            method: checkoutMethod,
+            reference: checkoutRef || `POS-${Date.now().toString().slice(-6)}`,
+            notes: `Settled in full at Checkout (${checkoutMethod})`,
+            received_by: user?.full_name || 'Front Desk'
+          });
         }
-        // Record corporate folio transfer item
-        folioService.addPayment({
-          hotel_id: hotelId,
-          folio_id: folio.id,
-          guest_id: folio.guest_id,
-          reservation_id: folio.reservation_id,
-          amount: folio.outstanding,
-          method: 'OTHER',
-          reference: `CITY-LEDGER-${corporateAccount.trim().toUpperCase()}`,
-          notes: `Billed to Corporate City Ledger: ${corporateAccount.trim()}`,
-          received_by: user?.full_name || 'Front Desk'
-        });
-      } else {
-        // Collect standard payment
-        folioService.addPayment({
-          hotel_id: hotelId,
-          folio_id: folio.id,
-          guest_id: folio.guest_id,
-          reservation_id: folio.reservation_id,
-          amount: folio.outstanding,
-          method: checkoutMethod,
-          reference: checkoutRef || `POS-${Date.now().toString().slice(-6)}`,
-          notes: `Settled in full at Checkout (${checkoutMethod})`,
-          received_by: user?.full_name || 'Front Desk'
-        });
       }
+
+      // Perform checkout in reservation service
+      await reservationService.checkOutAsync(activeReservation.id);
+
+      activityLogService.log({
+        hotel_id: hotelId,
+        user_id: user?.id,
+        actor_name: user?.full_name || 'Front Desk',
+        action: 'CHECK_OUT',
+        entity_type: 'reservation',
+        entity_id: activeReservation.id,
+        metadata: { room: currentRoom.number, guest: activeReservation.guest?.last_name }
+      });
+
+      setCheckoutSuccess(true);
+      toast.success('Checkout completed', `Room ${currentRoom.number} marked for housekeeping turnover`);
+      refreshRoomData(currentRoom.id);
+      onRoomUpdated?.(roomService.getById(currentRoom.id)!);
+    } catch (err: any) {
+      console.error('Checkout failed:', err);
+      const msg = err?.message || 'Database write rejected checkout. Please verify and retry.';
+      setCheckoutError(msg);
+      toast.error('Checkout failed', msg);
+    } finally {
+      setIsSubmittingCheckout(false);
     }
-
-    // Perform checkout in reservation service
-    reservationService.checkOut(activeReservation.id);
-
-    activityLogService.log({
-      hotel_id: hotelId,
-      user_id: user?.id,
-      actor_name: user?.full_name || 'Front Desk',
-      action: 'CHECK_OUT',
-      entity_type: 'reservation',
-      entity_id: activeReservation.id,
-      metadata: { room: currentRoom.number, guest: activeReservation.guest?.last_name }
-    });
-
-    setCheckoutSuccess(true);
-    refreshRoomData(currentRoom.id);
-    onRoomUpdated?.(roomService.getById(currentRoom.id)!);
   };
 
   // Handlers for Housekeeping / Maintenance Request
-  const handleCreateServiceRequest = (e: React.FormEvent) => {
+  const handleCreateServiceRequest = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (serviceType.startsWith('HK_')) {
-      const taskTypeMap: Record<string, 'TURNDOWN' | 'STAYOVER_CLEAN' | 'DEEP_CLEAN'> = {
-        'HK_CLEAN': 'STAYOVER_CLEAN',
-        'HK_TOWELS': 'TURNDOWN',
-        'HK_DEEP': 'DEEP_CLEAN'
-      };
-      housekeepingService.createTask({
-        hotel_id: hotelId,
-        room_id: currentRoom.id,
-        reservation_id: activeReservation?.id,
-        type: taskTypeMap[serviceType] || 'STAYOVER_CLEAN',
-        status: 'PENDING',
-        priority: servicePriority,
-        notes: serviceNotes || `Immediate Front Desk Request for Room ${currentRoom.number}`
-      });
-      setServiceSuccessMsg(`Housekeeping task dispatched for Room ${currentRoom.number}!`);
-    } else {
-      const catMap: Record<string, 'HVAC' | 'PLUMBING' | 'ELECTRICAL' | 'OTHER'> = {
-        'MAINT_AC': 'HVAC',
-        'MAINT_PLUMB': 'PLUMBING',
-        'MAINT_ELEC': 'ELECTRICAL',
-        'MAINT_OTHER': 'OTHER'
-      };
-      maintenanceService.create({
-        hotel_id: hotelId,
-        room_id: currentRoom.id,
-        title: `Room ${currentRoom.number}: ${serviceType.replace('MAINT_', '')} Issue`,
-        description: serviceNotes || 'Reported via Front Desk Command Console',
-        category: catMap[serviceType] || 'OTHER',
-        priority: servicePriority,
-        status: 'NEW'
-      });
-      setServiceSuccessMsg(`Maintenance ticket created and routed to technicians!`);
-    }
+    if (isSubmittingService) return;
+    setServiceError(null);
+    setIsSubmittingService(true);
 
-    setServiceNotes('');
+    try {
+      if (serviceType.startsWith('HK_')) {
+        const taskTypeMap: Record<string, 'TURNDOWN' | 'STAYOVER_CLEAN' | 'DEEP_CLEAN'> = {
+          'HK_CLEAN': 'STAYOVER_CLEAN',
+          'HK_TOWELS': 'TURNDOWN',
+          'HK_DEEP': 'DEEP_CLEAN'
+        };
+        await housekeepingService.createTaskAsync({
+          hotel_id: hotelId,
+          room_id: currentRoom.id,
+          reservation_id: activeReservation?.id,
+          type: taskTypeMap[serviceType] || 'STAYOVER_CLEAN',
+          status: 'PENDING',
+          priority: servicePriority,
+          notes: serviceNotes || `Immediate Front Desk Request for Room ${currentRoom.number}`
+        });
+        setServiceSuccessMsg(`Housekeeping task dispatched for Room ${currentRoom.number}!`);
+        toast.success('Housekeeping task dispatched', `Room ${currentRoom.number}`);
+      } else {
+        const catMap: Record<string, 'HVAC' | 'PLUMBING' | 'ELECTRICAL' | 'OTHER'> = {
+          'MAINT_AC': 'HVAC',
+          'MAINT_PLUMB': 'PLUMBING',
+          'MAINT_ELEC': 'ELECTRICAL',
+          'MAINT_OTHER': 'OTHER'
+        };
+        await maintenanceService.createAsync({
+          hotel_id: hotelId,
+          room_id: currentRoom.id,
+          title: `Room ${currentRoom.number}: ${serviceType.replace('MAINT_', '')} Issue`,
+          description: serviceNotes || 'Reported via Front Desk Command Console',
+          category: catMap[serviceType] || 'OTHER',
+          priority: servicePriority,
+          status: 'NEW'
+        });
+        setServiceSuccessMsg(`Maintenance ticket created and routed to technicians!`);
+        toast.success('Maintenance ticket created', `Room ${currentRoom.number}`);
+      }
+      setServiceNotes('');
+    } catch (err: any) {
+      const msg = err?.message || 'Database write rejected request.';
+      setServiceError(msg);
+      toast.error('Service request failed', msg);
+    } finally {
+      setIsSubmittingService(false);
+    }
   };
 
   const portalQrUrl = generateGuestPortalUrl(`gp-r${currentRoom.number}-demo`);
@@ -712,6 +796,15 @@ export function RoomActionConsoleModal({
               </div>
             ) : (
               <form onSubmit={handleCreateReservation} className="space-y-4">
+                {bookingError && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2 text-xs text-red-700">
+                    <AlertTriangle className="w-4 h-4 shrink-0 text-red-600 mt-0.5" />
+                    <div>
+                      <strong className="block font-semibold">Booking Write Failed</strong>
+                      <span>{bookingError}</span>
+                    </div>
+                  </div>
+                )}
                 <div className="flex items-center justify-between border-b border-stone-100 pb-2">
                   <span className="text-xs font-bold text-stone-800 uppercase tracking-wider">
                     Lock Reservation for Room {currentRoom.number}
@@ -883,8 +976,8 @@ export function RoomActionConsoleModal({
                   </div>
                 </div>
 
-                <Button type="submit" variant="primary" className="w-full">
-                  📅 Confirm & Lock Room Reservation
+                <Button type="submit" variant="primary" className="w-full" disabled={isSubmittingBooking}>
+                  {isSubmittingBooking ? 'Confirming with Database...' : '📅 Confirm & Lock Room Reservation'}
                 </Button>
               </form>
             )}
@@ -948,6 +1041,15 @@ export function RoomActionConsoleModal({
                 {isAddChargeOpen && (
                   <form onSubmit={handleAddFolioCharge} className="p-4 rounded-xl border border-amber-200 bg-amber-50/50 space-y-3 text-xs">
                     <span className="font-bold text-stone-900 block uppercase">Post New Charge to Room Folio</span>
+                    {chargeError && (
+                      <div className="p-2.5 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2 text-xs text-red-700">
+                        <AlertTriangle className="w-4 h-4 shrink-0 text-red-600 mt-0.5" />
+                        <div>
+                          <strong className="block font-semibold">Post Charge Failed</strong>
+                          <span>{chargeError}</span>
+                        </div>
+                      </div>
+                    )}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <Input
                         label="Charge Description *"
@@ -955,11 +1057,13 @@ export function RoomActionConsoleModal({
                         placeholder="e.g. Minibar - Wine & Snacks"
                         value={chargeDesc}
                         onChange={e => setChargeDesc(e.target.value)}
+                        disabled={isSubmittingCharge}
                       />
                       <Select
                         label="Service Category"
                         value={chargeCategory}
                         onChange={e => setChargeCategory(e.target.value as any)}
+                        disabled={isSubmittingCharge}
                         options={[
                           { value: 'ROOM_SERVICE', label: 'Room Service & In-Room Dining' },
                           { value: 'RESTAURANT', label: 'Restaurant & Bar' },
@@ -976,17 +1080,21 @@ export function RoomActionConsoleModal({
                         min="1"
                         value={chargeAmount}
                         onChange={e => setChargeAmount(Number(e.target.value))}
+                        disabled={isSubmittingCharge}
                       />
                       <Input
                         label="GST Rate (%)"
                         type="number"
                         value={chargeTaxPercent}
                         onChange={e => setChargeTaxPercent(Number(e.target.value))}
+                        disabled={isSubmittingCharge}
                       />
                     </div>
                     <div className="flex justify-end gap-2">
-                      <Button size="sm" variant="outline" onClick={() => setIsAddChargeOpen(false)}>Cancel</Button>
-                      <Button size="sm" variant="primary" type="submit">Post to Folio</Button>
+                      <Button size="sm" variant="outline" onClick={() => setIsAddChargeOpen(false)} disabled={isSubmittingCharge}>Cancel</Button>
+                      <Button size="sm" variant="primary" type="submit" disabled={isSubmittingCharge}>
+                        {isSubmittingCharge ? 'Posting...' : 'Post to Folio'}
+                      </Button>
                     </div>
                   </form>
                 )}
@@ -995,6 +1103,15 @@ export function RoomActionConsoleModal({
                 {isAddPaymentOpen && (
                   <form onSubmit={handleAddFolioPayment} className="p-4 rounded-xl border border-emerald-200 bg-emerald-50/50 space-y-3 text-xs">
                     <span className="font-bold text-stone-900 block uppercase">Record Advance Payment</span>
+                    {paymentError && (
+                      <div className="p-2.5 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2 text-xs text-red-700">
+                        <AlertTriangle className="w-4 h-4 shrink-0 text-red-600 mt-0.5" />
+                        <div>
+                          <strong className="block font-semibold">Payment Write Failed</strong>
+                          <span>{paymentError}</span>
+                        </div>
+                      </div>
+                    )}
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <Input
                         label="Payment Amount (₹) *"
@@ -1003,11 +1120,13 @@ export function RoomActionConsoleModal({
                         min="1"
                         value={payAmount}
                         onChange={e => setPayAmount(Number(e.target.value))}
+                        disabled={isSubmittingPayment}
                       />
                       <Select
                         label="Payment Method"
                         value={payMethod}
                         onChange={e => setPayMethod(e.target.value as PaymentMethod)}
+                        disabled={isSubmittingPayment}
                         options={[
                           { value: 'UPI', label: 'UPI (GPay / PhonePe / Paytm)' },
                           { value: 'CARD', label: 'Credit / Debit Card POS' },
@@ -1020,11 +1139,14 @@ export function RoomActionConsoleModal({
                         placeholder="e.g. UPI-987654"
                         value={payReference}
                         onChange={e => setPayReference(e.target.value)}
+                        disabled={isSubmittingPayment}
                       />
                     </div>
                     <div className="flex justify-end gap-2">
-                      <Button size="sm" variant="outline" onClick={() => setIsAddPaymentOpen(false)}>Cancel</Button>
-                      <Button size="sm" variant="primary" type="submit">Confirm Payment</Button>
+                      <Button size="sm" variant="outline" onClick={() => setIsAddPaymentOpen(false)} disabled={isSubmittingPayment}>Cancel</Button>
+                      <Button size="sm" variant="primary" type="submit" disabled={isSubmittingPayment}>
+                        {isSubmittingPayment ? 'Recording...' : 'Confirm Payment'}
+                      </Button>
                     </div>
                   </form>
                 )}
@@ -1128,6 +1250,16 @@ export function RoomActionConsoleModal({
               </div>
             ) : currentRoom.status === 'OCCUPIED' && activeReservation && folio ? (
               <div className="space-y-4 text-xs">
+                {checkoutError && (
+                  <div className="p-3.5 bg-red-50 border border-red-200 rounded-xl flex items-start gap-2 text-xs text-red-700">
+                    <AlertTriangle className="w-4 h-4 shrink-0 text-red-600 mt-0.5" />
+                    <div>
+                      <strong className="block font-semibold">Check-Out Mutation Error</strong>
+                      <span>{checkoutError}</span>
+                    </div>
+                  </div>
+                )}
+
                 {/* Settlement status check */}
                 {folio.outstanding > 0 ? (
                   <div className="p-4 rounded-xl border border-amber-200 bg-amber-50/60 space-y-3">
@@ -1200,8 +1332,9 @@ export function RoomActionConsoleModal({
                   variant="primary"
                   className="w-full"
                   onClick={handlePerformCheckOut}
+                  disabled={isSubmittingCheckout}
                 >
-                  🚪 Confirm Settlement & Complete Check-Out
+                  {isSubmittingCheckout ? 'Processing Check-Out & Database Settlement...' : '🚪 Confirm Settlement & Complete Check-Out'}
                 </Button>
               </div>
             ) : (
@@ -1216,6 +1349,34 @@ export function RoomActionConsoleModal({
         {/* TAB 5: HOUSEKEEPING & SERVICE REQUESTS */}
         {activeTab === 'housekeeping' && (
           <div className="space-y-4 animate-in fade-in duration-150">
+            {/* Active Maintenance Tickets Alert */}
+            {(() => {
+              const activeTickets = maintenanceService.getAll(hotelId).filter(
+                t => t.room_id === currentRoom.id && t.status !== 'CLOSED' && t.status !== 'VERIFIED'
+              );
+              if (activeTickets.length === 0) return null;
+              return (
+                <div className="p-3.5 rounded-xl border border-rose-200 bg-rose-50/60 space-y-2 text-xs">
+                  <span className="font-bold text-rose-800 flex items-center gap-1.5 uppercase tracking-wider text-[11px]">
+                    <Wrench className="w-3.5 h-3.5 text-rose-600" /> Active Maintenance Ticket{activeTickets.length > 1 ? 's' : ''} ({activeTickets.length})
+                  </span>
+                  <div className="space-y-1.5">
+                    {activeTickets.map(t => (
+                      <div key={t.id} className="text-xs flex items-center justify-between bg-white p-2 rounded-lg border border-rose-100 shadow-2xs">
+                        <div>
+                          <span className="font-bold text-stone-900">{t.title}</span>
+                          <span className="text-[11px] text-stone-500 block">{t.category} · Priority: {t.priority} · Tech: {t.assigned_to || 'Unassigned'}</span>
+                        </div>
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800">
+                          {t.status}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Condition Switchers */}
             <div className="space-y-2">
               <span className="text-xs font-bold text-stone-700 uppercase tracking-wider block">
@@ -1259,6 +1420,16 @@ export function RoomActionConsoleModal({
                 Dispatch Task / Maintenance Ticket for Room {currentRoom.number}
               </span>
 
+              {serviceError && (
+                <div className="p-2.5 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2 text-xs text-red-700">
+                  <AlertTriangle className="w-4 h-4 shrink-0 text-red-600 mt-0.5" />
+                  <div>
+                    <strong className="block font-semibold">Service Request Error</strong>
+                    <span>{serviceError}</span>
+                  </div>
+                </div>
+              )}
+
               {serviceSuccessMsg && (
                 <div className="p-2.5 rounded-lg bg-emerald-100 border border-emerald-300 text-emerald-900 font-bold flex items-center gap-1.5">
                   <Check className="w-4 h-4 text-emerald-700" />
@@ -1271,6 +1442,7 @@ export function RoomActionConsoleModal({
                   label="Service / Ticket Type"
                   value={serviceType}
                   onChange={e => setServiceType(e.target.value as any)}
+                  disabled={isSubmittingService}
                   options={[
                     { value: 'HK_CLEAN', label: 'Housekeeping: Room Cleaning' },
                     { value: 'HK_TOWELS', label: 'Housekeeping: Extra Towels & Linen' },
@@ -1285,6 +1457,7 @@ export function RoomActionConsoleModal({
                   label="Urgency Priority"
                   value={servicePriority}
                   onChange={e => setServicePriority(e.target.value as Priority)}
+                  disabled={isSubmittingService}
                   options={[
                     { value: 'LOW', label: 'Low - Routine schedule' },
                     { value: 'MEDIUM', label: 'Medium - Next available staff' },
@@ -1299,10 +1472,11 @@ export function RoomActionConsoleModal({
                 placeholder="e.g. Guest requested fresh feather pillows and extra bath towels"
                 value={serviceNotes}
                 onChange={e => setServiceNotes(e.target.value)}
+                disabled={isSubmittingService}
               />
 
-              <Button size="sm" variant="primary" type="submit" className="w-full">
-                🚀 Dispatch Service Ticket
+              <Button size="sm" variant="primary" type="submit" className="w-full" disabled={isSubmittingService}>
+                {isSubmittingService ? 'Dispatching with Confirmation...' : '🚀 Dispatch Service Ticket'}
               </Button>
             </form>
           </div>

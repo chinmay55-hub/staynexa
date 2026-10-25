@@ -2,21 +2,21 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { Building2, Eye, EyeOff, Loader2, AlertCircle } from 'lucide-react';
+import { Building2, Eye, EyeOff, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
 
 const DEMO_LOGINS = [
-  { label: 'Super Admin', email: 'admin@staynexa.com', role: 'Platform Admin' },
-  { label: 'Hotel Admin (Grand Palace)', email: 'vikram@grandpalace.com', role: 'Hotel Admin' },
-  { label: 'Reception (Grand Palace)', email: 'anjali@grandpalace.com', role: 'Reception' },
-  { label: 'Kitchen (Grand Palace)', email: 'mohan@grandpalace.com', role: 'Kitchen Staff' },
-  { label: 'Housekeeping', email: 'rekha@grandpalace.com', role: 'Housekeeping' },
-  { label: 'Maintenance', email: 'ramesh@grandpalace.com', role: 'Maintenance' },
-  { label: 'Hotel Admin (Willow Boutique)', email: 'priti@willowboutique.in', role: 'Hotel Admin' },
-  { label: 'Hotel Admin (Azure Cove)', email: 'carlos@azurecove.com', role: 'Hotel Admin' },
+  { label: 'Super Admin', email: 'admin@staynexa.com', role: 'Platform Admin', isStaging: true },
+  { label: 'Hotel Admin (Grand Palace)', email: 'vikram@grandpalace.com', role: 'Hotel Admin', isStaging: true },
+  { label: 'Reception (Grand Palace)', email: 'anjali@grandpalace.com', role: 'Reception', isStaging: true },
+  { label: 'Kitchen (Grand Palace)', email: 'mohan@grandpalace.com', role: 'Kitchen Staff', isStaging: false },
+  { label: 'Housekeeping', email: 'rekha@grandpalace.com', role: 'Housekeeping', isStaging: false },
+  { label: 'Maintenance', email: 'ramesh@grandpalace.com', role: 'Maintenance', isStaging: false },
+  { label: 'Hotel Admin (Willow Boutique)', email: 'priti@willowboutique.in', role: 'Hotel Admin', isStaging: false },
+  { label: 'Hotel Admin (Azure Cove)', email: 'carlos@azurecove.com', role: 'Hotel Admin', isStaging: false },
 ];
 
 export default function LoginPage() {
-  const { signIn, user, signOut } = useAuth();
+  const { signIn, user, signOut, isDemo } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -118,14 +118,24 @@ export default function LoginPage() {
         </div>
 
         <div className="w-full max-w-md">
-          {/* Demo banner */}
-          <div className="mb-6 bg-amber-50 border border-amber-200 rounded-xl p-4 flex gap-3">
-            <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-            <div>
-              <div className="text-amber-800 font-semibold text-sm">Demo Mode Active</div>
-              <div className="text-amber-700 text-xs mt-1">Use any quick login below. Password: <code className="bg-amber-100 px-1 rounded">demo123</code></div>
+          {/* Mode banner */}
+          {isDemo ? (
+            <div className="mb-6 bg-amber-50 border border-amber-200 rounded-xl p-4 flex gap-3">
+              <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <div className="text-amber-800 font-semibold text-sm">Demo Mode Active</div>
+                <div className="text-amber-700 text-xs mt-1">Use any quick login below. Password: <code className="bg-amber-100 px-1 rounded">demo123</code></div>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="mb-6 bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex gap-3">
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <div className="text-emerald-800 font-semibold text-sm">Supabase Staging Connected</div>
+                <div className="text-emerald-700 text-xs mt-1">Live staging database authentication is active. Use verified staging accounts below (Password: <code className="bg-emerald-100 px-1 rounded">demo123</code>).</div>
+              </div>
+            </div>
+          )}
 
           {user && (
             <div className="mb-6 bg-blue-50 border border-blue-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">

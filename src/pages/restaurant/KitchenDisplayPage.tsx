@@ -266,9 +266,25 @@ export default function KitchenDisplayPage() {
     return () => clearTimeout(timeout);
   }, [liveAlertBanner]);
 
-  const handleAdvanceStatus = (orderId: string, nextStatus: OrderStatus) => {
-    orderService.updateStatus(orderId, nextStatus);
-    setOrders(prev => prev.map(o => (o.id === orderId ? { ...o, status: nextStatus } : o)));
+  const [updatingOrderId, setUpdatingOrderId] = useState<string | null>(null);
+
+  const handleAdvanceStatus = async (orderId: string, nextStatus: OrderStatus) => {
+    if (updatingOrderId) return;
+    setUpdatingOrderId(orderId);
+
+    try {
+      await orderService.updateStatusAsync(orderId, nextStatus);
+      setOrders(prev => prev.map(o => (o.id === orderId ? { ...o, status: nextStatus } : o)));
+    } catch (err: any) {
+      console.error('KDS status transition failed:', err);
+      const errorMsg = err?.message || 'Database write rejected status update';
+      setLiveAlertBanner({
+        id: orderId,
+        message: `⚠️ Status update failed: ${errorMsg}. Ticket kept in current queue.`,
+      });
+    } finally {
+      setUpdatingOrderId(null);
+    }
   };
 
   // Filter active orders into 4 pipeline columns
@@ -534,6 +550,7 @@ export default function KitchenDisplayPage() {
                 elapsedMins={calcElapsedMins(order.created_at)}
                 actionLabel="Accept Order"
                 actionColor="bg-blue-600 hover:bg-blue-500 text-white"
+                isUpdating={updatingOrderId === order.id}
                 onAction={() => handleAdvanceStatus(order.id, 'ACCEPTED')}
                 onPrintKot={() => setSelectedKotOrder(order)}
               />
@@ -556,6 +573,7 @@ export default function KitchenDisplayPage() {
                 elapsedMins={calcElapsedMins(order.created_at)}
                 actionLabel="Start Preparing"
                 actionColor="bg-amber-600 hover:bg-amber-500 text-white"
+                isUpdating={updatingOrderId === order.id}
                 onAction={() => handleAdvanceStatus(order.id, 'PREPARING')}
                 onPrintKot={() => setSelectedKotOrder(order)}
               />
@@ -579,6 +597,7 @@ export default function KitchenDisplayPage() {
                 elapsedMins={calcElapsedMins(order.created_at)}
                 actionLabel="Mark Ready for Delivery"
                 actionColor="bg-emerald-600 hover:bg-emerald-500 text-white"
+                isUpdating={updatingOrderId === order.id}
                 onAction={() => handleAdvanceStatus(order.id, 'READY')}
                 onPrintKot={() => setSelectedKotOrder(order)}
               />
@@ -602,6 +621,7 @@ export default function KitchenDisplayPage() {
                 elapsedMins={calcElapsedMins(order.created_at)}
                 actionLabel="Dispatched / Delivered"
                 actionColor="bg-stone-700 hover:bg-stone-600 text-white"
+                isUpdating={updatingOrderId === order.id}
                 onAction={() => handleAdvanceStatus(order.id, 'DELIVERED')}
                 onPrintKot={() => setSelectedKotOrder(order)}
               />
@@ -770,6 +790,7 @@ function KdsCard({
   elapsedMins,
   actionLabel,
   actionColor,
+  isUpdating,
   onAction,
   onPrintKot,
 }: {
@@ -777,6 +798,7 @@ function KdsCard({
   elapsedMins: number;
   actionLabel: string;
   actionColor: string;
+  isUpdating?: boolean;
   onAction: () => void;
   onPrintKot: () => void;
 }) {
@@ -833,10 +855,22 @@ function KdsCard({
 
         <button
           onClick={onAction}
-          className={`flex-1 py-2.5 px-4 rounded-lg font-bold text-xs uppercase tracking-wider transition-colors active:scale-98 cursor-pointer flex items-center justify-center gap-2 ${actionColor}`}
+          disabled={isUpdating}
+          className={`flex-1 py-2.5 px-4 rounded-lg font-bold text-xs uppercase tracking-wider transition-colors active:scale-98 cursor-pointer flex items-center justify-center gap-2 ${actionColor} ${
+            isUpdating ? 'opacity-60 cursor-not-allowed' : ''
+          }`}
         >
-          <span>{actionLabel}</span>
-          <ArrowRight className="w-3.5 h-3.5" />
+          {isUpdating ? (
+            <span className="flex items-center gap-1.5">
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              <span>Saving...</span>
+            </span>
+          ) : (
+            <>
+              <span>{actionLabel}</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </>
+          )}
         </button>
       </div>
     </div>

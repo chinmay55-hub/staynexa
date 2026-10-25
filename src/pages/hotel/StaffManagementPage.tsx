@@ -62,26 +62,20 @@ export default function StaffManagementPage() {
     e.preventDefault();
     if (!newStaff.full_name || !newStaff.email) return;
 
-    const newProfile: Profile = {
-      id: `staff-${Date.now()}`,
-      user_id: `user-${Date.now()}`,
+    const newProfile = staffService.createProfile({
       full_name: newStaff.full_name,
       email: newStaff.email,
       phone: newStaff.phone,
       role: newStaff.role,
       is_active: true,
-      created_at: new Date().toISOString(),
-    };
+    });
 
-    DEMO_PROFILES.push(newProfile);
-    DEMO_MEMBERSHIPS.push({
-      id: `mem-${Date.now()}`,
+    staffService.createMembership({
       hotel_id: hotelId,
       user_id: newProfile.user_id,
       role: newStaff.role,
       department_id: newStaff.department_id,
       is_active: true,
-      joined_at: new Date().toISOString(),
     });
 
     setStaffList([...staffService.getAll(hotelId)]);
@@ -98,14 +92,12 @@ export default function StaffManagementPage() {
   const handleCreateDept = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newDept.name) return;
-    const dept: Department = {
-      id: `dept-${Date.now()}`,
+    staffService.createDepartment({
       hotel_id: hotelId,
       name: newDept.name,
       code: newDept.code.toUpperCase() || newDept.name.slice(0, 2).toUpperCase(),
       description: newDept.description,
-    };
-    DEMO_DEPARTMENTS.push(dept);
+    });
     setDepartments([...staffService.getDepartments(hotelId)]);
     setIsAddDeptOpen(false);
     setNewDept({ name: '', code: '', description: '' });

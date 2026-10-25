@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Wrench, 
   Plus, 
@@ -12,7 +12,14 @@ import {
   Layers
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
-import { maintenanceService, roomService, staffService, activityLogService } from '../../services/demoDataService';
+import { 
+  maintenanceService, 
+  roomService, 
+  staffService, 
+  activityLogService,
+  reloadDemoStoreFromStorage
+} from '../../services/demoDataService';
+import { realtimeSync } from '../../services/realtimeSync';
 import type { MaintenanceTicket, MaintenanceStatus, Priority } from '../../types';
 import { 
   Card, 
@@ -22,7 +29,8 @@ import {
   Input, 
   Select, 
   MaintenanceBadge, 
-  Modal 
+  Modal,
+  useToast
 } from '../../components/ui';
 
 export default function MaintenancePage() {
@@ -30,14 +38,59 @@ export default function MaintenancePage() {
   const hotelId = user?.hotel_id || 'hotel-001';
 
   const [tickets, setTickets] = useState(() => maintenanceService.getAll(hotelId));
-  const [rooms] = useState(() => roomService.getAll(hotelId));
-  const [staff] = useState(() => staffService.getAll(hotelId));
+  const [rooms, setRooms] = useState(() => roomService.getAll(hotelId));
+  const [staff, setStaff] = useState(() => staffService.getAll(hotelId));
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [categoryFilter, setCategoryFilter] = useState('ALL');
 
+  // Realtime & Cross-Tab State Synchronization
+  useEffect(() => {
+    const disconnectSupabase = realtimeSync.connectSupabaseHotelChannel(hotelId);
+
+    const refreshTickets = () => {
+      reloadDemoStoreFromStorage();
+      setTickets([...maintenanceService.getAll(hotelId)]);
+      setRooms([...roomService.getAll(hotelId)]);
+      setStaff([...staffService.getAll(hotelId)]);
+    };
+
+    const unsubNew = realtimeSync.subscribe('NEW_MAINTENANCE_TICKET', ({ ticket }) => {
+      if (ticket.hotel_id === hotelId) {
+        setTickets(prev => {
+          if (prev.some(t => t.id === ticket.id)) return prev;
+          return [ticket, ...prev];
+        });
+      }
+    });
+
+    const unsubUpdate = realtimeSync.subscribe('MAINTENANCE_TICKET_UPDATED', ({ ticketId, ticket }) => {
+      setTickets(prev =>
+        prev.map(t => (t.id === ticketId ? { ...t, ...ticket } : t))
+      );
+    });
+
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'staynexa_demo_store' || e.key === 'staynexa_global_sync') {
+        refreshTickets();
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      disconnectSupabase();
+      unsubNew();
+      unsubUpdate();
+    };
+  }, [hotelId]);
+
   // New Ticket Modal
+  const toast = useToast();
+  const [isSubmittingTicket, setIsSubmittingTicket] = useState(false);
+  const [ticketError, setTicketError] = useState<string | null>(null);
+
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [newTicket, setNewTicket] = useState({
     title: '',
@@ -59,52 +112,93 @@ export default function MaintenancePage() {
     return matchesSearch && matchesStatus && matchesCat;
   });
 
-  const handleUpdateStatus = (ticketId: string, nextStatus: MaintenanceStatus) => {
+  const handleAssignTech = async (ticketId: string, techName: string) => {
+    try {
+      const updated = await maintenanceService.updateAsync(ticketId, {
+        assigned_to: techName,
+        status: 'ASSIGNED',
+      });
+      if (updated) {
+        setTickets([...maintenanceService.getAll(hotelId)]);
+        activityLogService.log({
+          hotel_id: hotelId,
+          user_id: user?.id,
+          actor_name: user?.full_name,
+          action: 'UPDATE_MAINTENANCE_TICKET',
+          entity_type: 'maintenance_ticket',
+          entity_id: ticketId,
+          metadata: { assigned_to: techName, new_status: 'ASSIGNED' }
+        });
+        toast.success('Technician assigned', `${techName} assigned to ticket`);
+      }
+    } catch (err: any) {
+      toast.error('Failed to assign technician', err?.message || 'Database write rejected');
+    }
+  };
+
+  const handleUpdateStatus = async (ticketId: string, nextStatus: MaintenanceStatus) => {
     const timeUpdates: Partial<MaintenanceTicket> = {};
     if (nextStatus === 'RESOLVED') timeUpdates.resolved_at = new Date().toISOString();
     if (nextStatus === 'VERIFIED' || nextStatus === 'CLOSED') timeUpdates.verified_at = new Date().toISOString();
 
-    const updated = maintenanceService.update(ticketId, {
-      status: nextStatus,
-      ...timeUpdates,
-    });
-    if (updated) {
-      setTickets([...maintenanceService.getAll(hotelId)]);
-      activityLogService.log({
-        hotel_id: hotelId,
-        user_id: user?.id,
-        actor_name: user?.full_name,
-        action: 'UPDATE_MAINTENANCE_TICKET',
-        entity_type: 'maintenance_ticket',
-        entity_id: ticketId,
-        metadata: { new_status: nextStatus }
+    try {
+      const updated = await maintenanceService.updateAsync(ticketId, {
+        status: nextStatus,
+        ...timeUpdates,
       });
+      if (updated) {
+        setTickets([...maintenanceService.getAll(hotelId)]);
+        activityLogService.log({
+          hotel_id: hotelId,
+          user_id: user?.id,
+          actor_name: user?.full_name,
+          action: 'UPDATE_MAINTENANCE_TICKET',
+          entity_type: 'maintenance_ticket',
+          entity_id: ticketId,
+          metadata: { new_status: nextStatus }
+        });
+        toast.success('Ticket updated', `Status changed to ${nextStatus}`);
+      }
+    } catch (err: any) {
+      toast.error('Failed to update ticket status', err?.message || 'Database write rejected');
     }
   };
 
-  const handleCreateTicket = (e: React.FormEvent) => {
+  const handleCreateTicket = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTicket.title) return;
-    maintenanceService.create({
-      hotel_id: hotelId,
-      room_id: newTicket.room_id || undefined,
-      title: newTicket.title,
-      description: newTicket.description,
-      category: newTicket.category,
-      priority: newTicket.priority,
-      status: newTicket.assigned_to ? 'ASSIGNED' : 'NEW',
-      assigned_to: newTicket.assigned_to || undefined,
-    });
-    setTickets([...maintenanceService.getAll(hotelId)]);
-    setIsAddOpen(false);
-    setNewTicket({
-      title: '',
-      description: '',
-      room_id: rooms[0]?.id || '',
-      category: 'HVAC',
-      priority: 'HIGH',
-      assigned_to: '',
-    });
+    if (!newTicket.title || isSubmittingTicket) return;
+    setTicketError(null);
+    setIsSubmittingTicket(true);
+
+    try {
+      await maintenanceService.createAsync({
+        hotel_id: hotelId,
+        room_id: newTicket.room_id || undefined,
+        title: newTicket.title,
+        description: newTicket.description,
+        category: newTicket.category,
+        priority: newTicket.priority,
+        status: newTicket.assigned_to ? 'ASSIGNED' : 'NEW',
+        assigned_to: newTicket.assigned_to || undefined,
+      });
+      setTickets([...maintenanceService.getAll(hotelId)]);
+      setIsAddOpen(false);
+      setNewTicket({
+        title: '',
+        description: '',
+        room_id: rooms[0]?.id || '',
+        category: 'HVAC',
+        priority: 'HIGH',
+        assigned_to: '',
+      });
+      toast.success('Ticket created', 'Maintenance ticket registered');
+    } catch (err: any) {
+      const msg = err?.message || 'Database write rejected maintenance ticket';
+      setTicketError(msg);
+      toast.error('Failed to create ticket', msg);
+    } finally {
+      setIsSubmittingTicket(false);
+    }
   };
 
   return (
@@ -204,17 +298,32 @@ export default function MaintenancePage() {
                       </span>
                     </td>
                     <td className="py-3.5 px-4 text-xs text-stone-700">
-                      {ticket.assigned_to || <span className="text-stone-400">Unassigned</span>}
+                      {ticket.assigned_to ? (
+                        <span className="font-semibold text-stone-800">{ticket.assigned_to}</span>
+                      ) : (
+                        <select
+                          aria-label={`Assign technician for ticket ${ticket.id}`}
+                          className="text-xs bg-stone-50 border border-stone-200 rounded px-2 py-1 text-stone-600 focus:outline-none focus:ring-1 focus:ring-[#c9a84c] cursor-pointer"
+                          value=""
+                          onChange={e => e.target.value && handleAssignTech(ticket.id, e.target.value)}
+                        >
+                          <option value="">Assign Tech...</option>
+                          {staff.map(s => (
+                            <option key={s.id} value={s.full_name}>{s.full_name}</option>
+                          ))}
+                        </select>
+                      )}
                     </td>
                     <td className="py-3.5 px-4">
                       <MaintenanceBadge status={ticket.status} />
                     </td>
                     <td className="py-3.5 px-4 text-right space-x-1.5">
-                      {ticket.status === 'NEW' && (
+                      {(ticket.status === 'NEW' || ticket.status === 'ASSIGNED') && (
                         <Button
                           variant="outline"
                           size="sm"
                           onClick={() => handleUpdateStatus(ticket.id, 'IN_PROGRESS')}
+                          iconLeft={<Play className="w-3.5 h-3.5" />}
                         >
                           Start Repair
                         </Button>
@@ -224,6 +333,7 @@ export default function MaintenancePage() {
                           variant="primary"
                           size="sm"
                           onClick={() => handleUpdateStatus(ticket.id, 'RESOLVED')}
+                          iconLeft={<Check className="w-3.5 h-3.5" />}
                         >
                           Mark Resolved
                         </Button>
@@ -233,6 +343,7 @@ export default function MaintenancePage() {
                           variant="secondary"
                           size="sm"
                           onClick={() => handleUpdateStatus(ticket.id, 'VERIFIED')}
+                          iconLeft={<CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />}
                         >
                           Verify & Close
                         </Button>
@@ -272,7 +383,10 @@ export default function MaintenancePage() {
               label="Room Location"
               value={newTicket.room_id}
               onChange={e => setNewTicket({ ...newTicket, room_id: e.target.value })}
-              options={rooms.map(r => ({ value: r.id, label: `Room ${r.number}` }))}
+              options={[
+                { value: '', label: 'Common Area / General Facility' },
+                ...rooms.map(r => ({ value: r.id, label: `Room ${r.number}` })),
+              ]}
             />
             <Select
               label="Category"
@@ -299,11 +413,14 @@ export default function MaintenancePage() {
                 { value: 'LOW', label: 'Low' },
               ]}
             />
-            <Input
+            <Select
               label="Assign Technician"
-              placeholder="e.g. Ramesh Kumar"
               value={newTicket.assigned_to}
               onChange={e => setNewTicket({ ...newTicket, assigned_to: e.target.value })}
+              options={[
+                { value: '', label: 'Unassigned (General Queue)' },
+                ...staff.map(s => ({ value: s.full_name, label: s.full_name })),
+              ]}
             />
           </div>
           <Input
