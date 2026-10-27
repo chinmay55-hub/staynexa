@@ -144,21 +144,18 @@ export default function KitchenDisplayPage() {
             if (payload.eventType === 'INSERT' && payload.new) {
               const raw = payload.new as any;
               if (raw.hotel_id === hotelId) {
-                const newOrder: Order = {
-                  ...raw,
-                  status: (raw.status || 'PENDING').toUpperCase() as OrderStatus,
-                  items: Array.isArray(raw.items) ? raw.items : [],
-                  room: raw.room_number ? { number: raw.room_number } as any : undefined,
-                };
-                setOrders(prev => {
-                  if (prev.some(o => o.id === newOrder.id)) return prev;
-                  return [newOrder, ...prev];
-                });
-                audioService.playChime();
-                const roomNum = raw.room_number || raw.room_id || 'Portal';
-                setLiveAlertBanner({
-                  id: newOrder.id,
-                  message: `🔔 New Order #${newOrder.id.slice(-6).toUpperCase()} from Room ${roomNum}`,
+                // Fetch full order with items immediately to populate order items in realtime
+                fetchDirectKdsOrders().then(fresh => {
+                  if (fresh && fresh.length > 0) {
+                    setOrders(fresh);
+                    audioService.playChime();
+                    const newest = fresh.find(f => f.id === raw.id) || fresh[0];
+                    const roomNum = (newest as any).room_number || newest.room?.number || 'Portal';
+                    setLiveAlertBanner({
+                      id: newest.id,
+                      message: `🔔 New Order #${newest.id.slice(-6).toUpperCase()} from Room ${roomNum}`,
+                    });
+                  }
                 });
               }
             } else if (payload.eventType === 'UPDATE' && payload.new) {

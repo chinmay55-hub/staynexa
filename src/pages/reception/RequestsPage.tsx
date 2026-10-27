@@ -18,7 +18,8 @@ import {
   guestService, 
   staffService,
   activityLogService,
-  reloadDemoStoreFromStorage
+  reloadDemoStoreFromStorage,
+  demoDataService
 } from '../../services/demoDataService';
 import { realtimeSync } from '../../services/realtimeSync';
 import type { ServiceRequest, RequestStatus, Priority } from '../../types';
@@ -51,6 +52,15 @@ export default function RequestsPage() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [priorityFilter, setPriorityFilter] = useState<string>('ALL');
+
+  // Initial Supabase Data Synchronization
+  useEffect(() => {
+    if (hotelId) {
+      demoDataService.syncFromSupabase(hotelId).then(() => {
+        setRequests([...serviceRequestService.getAll(hotelId)]);
+      });
+    }
+  }, [hotelId]);
 
   // Realtime WebSocket & Cross-Tab State Synchronization
   useEffect(() => {

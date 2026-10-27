@@ -49,14 +49,14 @@ export const getBaseUrl = (): string => {
 
 /**
  * Generates the canonical Guest Portal access URL for a room QR token or room object.
- * Formats canonical route to `${getBaseUrl()}/q/${room.qrToken || room.id}`.
+ * Formats canonical route to `${getBaseUrl()}/guest/${room.qrToken || room.id}`.
  */
 export const generateGuestPortalUrl = (target?: string | RoomLikeTarget | null): string => {
   const origin = getBaseUrl();
-  if (!target) return `${origin}/q/101`;
+  if (!target) return `${origin}/guest/101`;
   if (typeof target === 'string') {
-    return `${origin}/q/${target}`;
+    return `${origin}/guest/${target}`;
   }
   const identifier = target.qrToken || target.token || target.id || target.number || '101';
-  return `${origin}/q/${identifier}`;
+  return `${origin}/guest/${identifier}`;
 };

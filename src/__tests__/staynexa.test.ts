@@ -669,21 +669,21 @@ describe('STAYNEXA CORE HOTEL OPERATING SYSTEM TEST SUITE', () => {
 
   // ─── 13. DYNAMIC PRODUCTION QR URL & GUEST PORTAL ROUTING ────────────────
   describe('Dynamic Production QR Base URL & Guest Portal Routing', () => {
-    it('should generate canonical /q/:token url with current origin', () => {
+    it('should generate canonical /guest/:token url with current origin', () => {
       const url = generateGuestPortalUrl('test-token-123');
-      expect(url).toContain('/q/test-token-123');
+      expect(url).toContain('/guest/test-token-123');
       expect(url.startsWith('http')).toBe(true);
     });
 
-    it('should generate canonical /q/:token url for room object or room target', () => {
+    it('should generate canonical /guest/:token url for room object or room target', () => {
       const urlWithRoom = generateGuestPortalUrl({ id: 'room-001', number: '101' });
-      expect(urlWithRoom).toContain('/q/room-001');
+      expect(urlWithRoom).toContain('/guest/room-001');
 
       const urlWithQrToken = generateGuestPortalUrl({ qrToken: 'gp-r101-abc123' });
-      expect(urlWithQrToken).toContain('/q/gp-r101-abc123');
+      expect(urlWithQrToken).toContain('/guest/gp-r101-abc123');
 
       const urlEmpty = generateGuestPortalUrl(null);
-      expect(urlEmpty).toContain('/q/101');
+      expect(urlEmpty).toContain('/guest/101');
     });
 
     it('should provide dynamic base URL matching window origin or fallback', () => {

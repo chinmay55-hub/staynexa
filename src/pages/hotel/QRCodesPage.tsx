@@ -10,7 +10,9 @@ import {
   Eye,
   ShieldCheck,
   Building2,
-  Loader2
+  Loader2,
+  Copy,
+  AlertTriangle
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { useAuth } from '../../contexts/AuthContext';
@@ -36,6 +38,8 @@ export default function QRCodesPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [actionRoomId, setActionRoomId] = useState<string | null>(null);
+
+  const [confirmRevokeRoom, setConfirmRevokeRoom] = useState<{ roomId: string; roomNumber: string } | null>(null);
 
   // Sync rooms and QR codes from Supabase on mount
   useEffect(() => {
@@ -157,6 +161,35 @@ export default function QRCodesPage() {
     document.body.removeChild(link);
   };
 
+  const handleDownloadSvg = (qr: QRCodeType) => {
+    const fullUrl = generateGuestPortalUrl(qr.token);
+    QRCode.toString(fullUrl, { type: 'svg', width: 300, margin: 2, color: { dark: '#1a2744', light: '#ffffff' } })
+      .then((svgString: string) => {
+        const roomNum = qr.room?.number || qr.room_id || 'room';
+        const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `StayNexa-QR-Room-${roomNum}.svg`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        toast.success('SVG downloaded', `High-res vector QR for Room ${roomNum} saved`);
+      })
+      .catch((err: any) => {
+        toast.error('SVG Generation failed', err?.message);
+      });
+  };
+
+  const handleCopyLink = (token: string) => {
+    const fullUrl = generateGuestPortalUrl(token);
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(fullUrl);
+      toast.success('Link copied', 'Guest Portal URL copied to clipboard');
+    }
+  };
+
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
       {/* Header */}
@@ -249,6 +282,14 @@ export default function QRCodesPage() {
                             <Button 
                               variant="outline" 
                               size="sm"
+                              onClick={() => handleCopyLink(qr.token)}
+                              iconLeft={<Copy className="w-3.5 h-3.5" />}
+                            >
+                              Copy
+                            </Button>
+                            <Button 
+                              variant="outline" 
+                              size="sm"
                               onClick={() => setPreviewQr(qr)}
                               iconLeft={<Eye className="w-3.5 h-3.5" />}
                             >
@@ -258,7 +299,7 @@ export default function QRCodesPage() {
                               variant="ghost" 
                               size="sm"
                               disabled={actionRoomId === room.id}
-                              onClick={() => handleRegenerate(room.id)}
+                              onClick={() => setConfirmRevokeRoom({ roomId: room.id, roomNumber: room.number })}
                             >
                               {actionRoomId === room.id ? 'Regenerating...' : 'Regenerate'}
                             </Button>
@@ -293,20 +334,38 @@ export default function QRCodesPage() {
           footer={
             <div className="flex justify-between items-center w-full gap-2">
               <Button variant="outline" onClick={() => setPreviewQr(null)}>Close</Button>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 flex-wrap justify-end">
                 <Button
                   variant="outline"
-                  onClick={() => handleDownloadPng(previewQr)}
-                  iconLeft={<Download className="w-4 h-4" />}
+                  size="sm"
+                  onClick={() => handleCopyLink(previewQr.token)}
+                  iconLeft={<Copy className="w-3.5 h-3.5" />}
                 >
-                  Download PNG
+                  Copy Link
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleDownloadPng(previewQr)}
+                  iconLeft={<Download className="w-3.5 h-3.5" />}
+                >
+                  PNG
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleDownloadSvg(previewQr)}
+                  iconLeft={<Download className="w-3.5 h-3.5" />}
+                >
+                  SVG
                 </Button>
                 <Button 
                   variant="primary" 
+                  size="sm"
                   onClick={() => window.print()}
-                  iconLeft={<Printer className="w-4 h-4" />}
+                  iconLeft={<Printer className="w-3.5 h-3.5" />}
                 >
-                  Print Standee
+                  Print
                 </Button>
               </div>
             </div>
@@ -442,6 +501,44 @@ export default function QRCodesPage() {
                 <div className="text-[10px] text-stone-500">Wi-Fi Access · Room Service · Instant Requests</div>
               </div>
             ))}
+          </div>
+        </Modal>
+      )}
+
+      {/* Revocation Confirmation Modal */}
+      {confirmRevokeRoom && (
+        <Modal
+          isOpen={true}
+          onClose={() => setConfirmRevokeRoom(null)}
+          title="Regenerate & Revoke Room QR Code"
+          size="sm"
+          footer={
+            <div className="flex justify-end gap-2 w-full">
+              <Button variant="outline" onClick={() => setConfirmRevokeRoom(null)}>Cancel</Button>
+              <Button
+                variant="danger"
+                disabled={actionRoomId === confirmRevokeRoom.roomId}
+                onClick={async () => {
+                  const rId = confirmRevokeRoom.roomId;
+                  setConfirmRevokeRoom(null);
+                  await handleRegenerate(rId);
+                }}
+              >
+                Confirm & Rotate Token
+              </Button>
+            </div>
+          }
+        >
+          <div className="space-y-3 p-2">
+            <div className="flex items-center gap-2 text-amber-700 bg-amber-50 p-3 rounded-xl border border-amber-200">
+              <AlertTriangle className="w-5 h-5 shrink-0" />
+              <div className="text-xs">
+                <strong>Attention:</strong> Regenerating the QR for <strong>Room {confirmRevokeRoom.roomNumber}</strong> will immediately revoke previously printed standees for this room.
+              </div>
+            </div>
+            <p className="text-xs text-stone-600">
+              A new unpredictable cryptographic access token will be generated. Are you sure you want to proceed?
+            </p>
           </div>
         </Modal>
       )}

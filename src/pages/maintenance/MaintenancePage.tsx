@@ -17,7 +17,9 @@ import {
   roomService, 
   staffService, 
   activityLogService,
-  reloadDemoStoreFromStorage
+  reloadDemoStoreFromStorage,
+  serviceRequestService,
+  demoDataService
 } from '../../services/demoDataService';
 import { realtimeSync } from '../../services/realtimeSync';
 import type { MaintenanceTicket, MaintenanceStatus, Priority } from '../../types';
@@ -37,13 +39,34 @@ export default function MaintenancePage() {
   const { user } = useAuth();
   const hotelId = user?.hotel_id || 'hotel-001';
 
+  const isMaintenanceReq = (r: any) => {
+    const cat = (r.service?.category || '').toUpperCase();
+    const title = (r.title || '').toLowerCase();
+    const desc = (r.description || '').toLowerCase();
+    return cat.includes('MAINTENANCE') || title.includes('ac') || title.includes('air') || title.includes('plumb') || title.includes('wifi') || title.includes('electric') || title.includes('tv') || desc.includes('repair') || desc.includes('fix');
+  };
+
   const [tickets, setTickets] = useState(() => maintenanceService.getAll(hotelId));
   const [rooms, setRooms] = useState(() => roomService.getAll(hotelId));
   const [staff, setStaff] = useState(() => staffService.getAll(hotelId));
+  const [guestRequests, setGuestRequests] = useState(() => serviceRequestService.getAll(hotelId).filter(isMaintenanceReq));
+  const [activeTab, setActiveTab] = useState<'TICKETS' | 'GUEST_ISSUES'>('TICKETS');
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [categoryFilter, setCategoryFilter] = useState('ALL');
+
+  // Initial Supabase Data Synchronization
+  useEffect(() => {
+    if (hotelId) {
+      demoDataService.syncFromSupabase(hotelId).then(() => {
+        setTickets([...maintenanceService.getAll(hotelId)]);
+        setRooms([...roomService.getAll(hotelId)]);
+        setStaff([...staffService.getAll(hotelId)]);
+        setGuestRequests(serviceRequestService.getAll(hotelId).filter(isMaintenanceReq));
+      });
+    }
+  }, [hotelId]);
 
   // Realtime & Cross-Tab State Synchronization
   useEffect(() => {
@@ -54,6 +77,7 @@ export default function MaintenancePage() {
       setTickets([...maintenanceService.getAll(hotelId)]);
       setRooms([...roomService.getAll(hotelId)]);
       setStaff([...staffService.getAll(hotelId)]);
+      setGuestRequests(serviceRequestService.getAll(hotelId).filter(isMaintenanceReq));
     };
 
     const unsubNew = realtimeSync.subscribe('NEW_MAINTENANCE_TICKET', ({ ticket }) => {
@@ -71,6 +95,18 @@ export default function MaintenancePage() {
       );
     });
 
+    const unsubNewReq = realtimeSync.subscribe('NEW_SERVICE_REQUEST', ({ request }) => {
+      if (request.hotel_id === hotelId && isMaintenanceReq(request)) {
+        setGuestRequests(prev => [request, ...prev.filter(r => r.id !== request.id)]);
+      }
+    });
+
+    const unsubReqStatus = realtimeSync.subscribe('REQUEST_STATUS_CHANGED', ({ requestId, status, request }) => {
+      setGuestRequests(prev =>
+        prev.map(r => (r.id === requestId ? { ...r, ...request, status } : r))
+      );
+    });
+
     const handleStorage = (e: StorageEvent) => {
       if (e.key === 'staynexa_demo_store' || e.key === 'staynexa_global_sync') {
         refreshTickets();
@@ -83,6 +119,8 @@ export default function MaintenancePage() {
       disconnectSupabase();
       unsubNew();
       unsubUpdate();
+      unsubNewReq();
+      unsubReqStatus();
     };
   }, [hotelId]);
 
@@ -218,7 +256,29 @@ export default function MaintenancePage() {
         </Button>
       </div>
 
-      {/* Filter Bar */}
+      {/* Tabs */}
+      <div className="flex gap-2 border-b border-stone-200">
+        <button
+          onClick={() => setActiveTab('TICKETS')}
+          className={`pb-3 px-4 text-xs font-semibold border-b-2 transition-colors cursor-pointer ${
+            activeTab === 'TICKETS' ? 'border-[#c9a84c] text-stone-900 font-bold' : 'border-transparent text-stone-500 hover:text-stone-800'
+          }`}
+        >
+          Work Orders & Tickets ({tickets.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('GUEST_ISSUES')}
+          className={`pb-3 px-4 text-xs font-semibold border-b-2 transition-colors cursor-pointer ${
+            activeTab === 'GUEST_ISSUES' ? 'border-[#c9a84c] text-stone-900 font-bold' : 'border-transparent text-stone-500 hover:text-stone-800'
+          }`}
+        >
+          Guest Reported Issues ({guestRequests.filter(r => r.status !== 'COMPLETED').length})
+        </button>
+      </div>
+
+      {activeTab === 'TICKETS' ? (
+        <>
+          {/* Filter Bar */}
       <Card className="shadow-xs">
         <CardContent className="p-4 flex flex-col md:flex-row gap-3">
           <div className="flex-1">
@@ -356,6 +416,76 @@ export default function MaintenancePage() {
           </div>
         </CardContent>
       </Card>
+      </>
+      ) : (
+        <div className="space-y-4">
+          {guestRequests.length === 0 ? (
+            <Card className="border-stone-200">
+              <CardContent className="p-8 text-center text-stone-500">
+                <Wrench className="w-8 h-8 text-stone-300 mx-auto mb-2" />
+                <p className="text-sm font-semibold">No maintenance issues reported by guests.</p>
+                <p className="text-xs text-stone-400 mt-1">When guests report AC, Wi-Fi, plumbing, or electrical issues via their room portal, tickets are dispatched here immediately.</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {guestRequests.map(req => {
+                const isPending = req.status === 'PENDING' || req.status === 'ASSIGNED' || req.status === 'IN_PROGRESS';
+                return (
+                  <Card key={req.id} className="border-stone-200 shadow-xs flex flex-col justify-between">
+                    <CardContent className="p-4 space-y-3">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <span className="font-extrabold text-lg text-stone-900 block">
+                            Room {req.room?.number || 'Guest'}
+                          </span>
+                          <span className="text-xs text-[#c9a84c] font-bold">{req.title}</span>
+                        </div>
+                        <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                          req.status === 'COMPLETED' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                        }`}>
+                          {req.status}
+                        </span>
+                      </div>
+
+                      {req.description && (
+                        <p className="text-xs text-stone-600 bg-stone-50 p-2.5 rounded-lg border border-stone-100">
+                          {req.description}
+                        </p>
+                      )}
+
+                      <div className="text-[10px] text-stone-400 flex justify-between items-center pt-1 border-t border-stone-100">
+                        <span>Reported: {new Date(req.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                        <span className="font-bold text-stone-600">Priority: {req.priority}</span>
+                      </div>
+
+                      {isPending && (
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          className="w-full mt-2"
+                          iconLeft={<Check className="w-3.5 h-3.5" />}
+                          onClick={async () => {
+                            try {
+                              await serviceRequestService.updateAsync(req.id, { status: 'COMPLETED' });
+                              setGuestRequests(serviceRequestService.getAll(hotelId).filter(isMaintenanceReq));
+                              toast.success('Issue Resolved', `${req.title} for Room ${req.room?.number || ''} marked resolved`);
+                            } catch (err: any) {
+                              toast.error('Failed to update issue', err?.message || 'Update failed');
+                            }
+                          }}
+                        >
+                          Mark Inspected & Resolved
+                        </Button>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* New Ticket Modal */}
       <Modal

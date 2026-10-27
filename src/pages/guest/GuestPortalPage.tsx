@@ -22,7 +22,11 @@ import {
   BellRing,
   Printer,
   CreditCard,
-  MessageSquare
+  MessageSquare,
+  Search,
+  X,
+  RefreshCw,
+  Wrench
 } from 'lucide-react';
 import { 
   qrService, 
@@ -77,12 +81,14 @@ export default function GuestPortalPage() {
   const [folio, setFolio] = useState<Folio | null>(null);
 
   // Active Bottom Tab
-  const [activeTab, setActiveTab] = useState<'HOME' | 'FOOD' | 'SERVICES' | 'CHAT' | 'STAY' | 'CONTACT'>('HOME');
+  const [activeTab, setActiveTab] = useState<'HOME' | 'FOOD' | 'ORDERS' | 'SERVICES' | 'CHAT' | 'STAY' | 'CONTACT'>('HOME');
 
   // Food Cart & Menu state
   const [categories, setCategories] = useState<MenuCategory[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
+  const [menuSearch, setMenuSearch] = useState('');
+  const [vegOnly, setVegOnly] = useState(false);
   const [cart, setCart] = useState<{ [itemId: string]: number }>({});
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [paymentOption, setPaymentOption] = useState<'ROOM_CHARGE' | 'UPI'>('ROOM_CHARGE');
@@ -90,10 +96,12 @@ export default function GuestPortalPage() {
   const [orderSuccessToast, setOrderSuccessToast] = useState<string | null>(null);
   const [orderErrorMsg, setOrderErrorMsg] = useState<string | null>(null);
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
+  const [isRefreshingOrders, setIsRefreshingOrders] = useState(false);
   const [myOrders, setMyOrders] = useState<Order[]>([]);
 
   // Services state
   const [services, setServices] = useState<HotelService[]>([]);
+  const [serviceCategory, setServiceCategory] = useState<'ALL' | 'HOUSEKEEPING' | 'MAINTENANCE' | 'CONCIERGE'>('ALL');
   const [myRequests, setMyRequests] = useState<ServiceRequest[]>([]);
   const [selectedService, setSelectedService] = useState<HotelService | null>(null);
   const [requestDesc, setRequestDesc] = useState('');
@@ -145,6 +153,35 @@ export default function GuestPortalPage() {
             if (sessionData.room) setRoom(sessionData.room);
             setReservation(sessionData.reservation || null);
             setGuest(sessionData.guest || null);
+            if (Array.isArray(sessionData.categories) && sessionData.categories.length > 0) {
+              setCategories(sessionData.categories);
+            }
+            if (Array.isArray(sessionData.menu_items) && sessionData.menu_items.length > 0) {
+              setMenuItems(sessionData.menu_items);
+            }
+            if (Array.isArray(sessionData.services) && sessionData.services.length > 0) {
+              setServices(sessionData.services);
+            }
+            if (Array.isArray(sessionData.orders)) {
+              setMyOrders(sessionData.orders);
+              if (typeof sessionStorage !== 'undefined') {
+                sessionData.orders.forEach((o: any) => {
+                  if (o.tracking_token && o.id) {
+                    sessionStorage.setItem('staynexa_tracking_' + o.id, o.tracking_token);
+                  }
+                });
+              }
+            }
+            if (Array.isArray(sessionData.requests)) {
+              setMyRequests(sessionData.requests);
+              if (typeof sessionStorage !== 'undefined') {
+                sessionData.requests.forEach((r: any) => {
+                  if (r.tracking_token && r.id) {
+                    sessionStorage.setItem('staynexa_req_tracking_' + r.id, r.tracking_token);
+                  }
+                });
+              }
+            }
             setDemoNotice(null);
             setIsLoading(false);
             return;
@@ -388,6 +425,57 @@ export default function GuestPortalPage() {
   const cartTotal = taxCalculation.grandTotal;
   const cartTotalItems = Object.values(cart).reduce((a, b) => a + b, 0);
 
+  const handleRefreshOrders = async () => {
+    setIsRefreshingOrders(true);
+    try {
+      if (token && isSupabaseConfigured() && supabase) {
+        const { data: sessionData } = await supabase.rpc('resolve_guest_portal_session', { p_token: token });
+        if (sessionData?.orders && Array.isArray(sessionData.orders)) {
+          setMyOrders(sessionData.orders);
+        }
+        if (sessionData?.requests && Array.isArray(sessionData.requests)) {
+          setMyRequests(sessionData.requests);
+        }
+      } else if (hotel && room && reservation) {
+        const allOrders = orderService.getAll(hotel.id);
+        setMyOrders(allOrders.filter(o => o.room_id === room.id && o.reservation_id === reservation.id));
+        const allRequests = serviceRequestService.getAll(hotel.id);
+        setMyRequests(allRequests.filter(r => r.room_id === room.id && r.reservation_id === reservation.id));
+      }
+    } catch (e) {
+      console.warn('Manual refresh error:', e);
+    } finally {
+      setTimeout(() => setIsRefreshingOrders(false), 400);
+    }
+  };
+
+  const filteredMenuItems = menuItems.filter(item => {
+    if (selectedCategory !== 'ALL' && item.category_id !== selectedCategory) return false;
+    if (vegOnly && !item.is_veg) return false;
+    if (menuSearch.trim()) {
+      const q = menuSearch.toLowerCase().trim();
+      const matchName = item.name.toLowerCase().includes(q);
+      const matchDesc = item.description ? item.description.toLowerCase().includes(q) : false;
+      if (!matchName && !matchDesc) return false;
+    }
+    return true;
+  });
+
+  const filteredServices = services.filter(s => {
+    if (serviceCategory === 'ALL') return true;
+    const cat = (s.category || '').toUpperCase();
+    if (serviceCategory === 'HOUSEKEEPING') {
+      return cat.includes('HOUSEKEEPING') || s.name.toLowerCase().includes('towel') || s.name.toLowerCase().includes('linen') || s.name.toLowerCase().includes('clean') || s.name.toLowerCase().includes('toilet');
+    }
+    if (serviceCategory === 'MAINTENANCE') {
+      return cat.includes('MAINTENANCE') || s.name.toLowerCase().includes('ac') || s.name.toLowerCase().includes('air') || s.name.toLowerCase().includes('plumb') || s.name.toLowerCase().includes('wifi') || s.name.toLowerCase().includes('electric');
+    }
+    if (serviceCategory === 'CONCIERGE') {
+      return cat.includes('CONCIERGE') || s.name.toLowerCase().includes('wake') || s.name.toLowerCase().includes('luggage') || s.name.toLowerCase().includes('laundry');
+    }
+    return true;
+  });
+
   // Place Food Order
   const handlePlaceOrder = async () => {
     if (!hotel || !room || !reservation || !guest) {
@@ -483,6 +571,7 @@ export default function GuestPortalPage() {
       setOrderSpecialInstructions('');
       const orderTag = room?.number ? `${room.number}` : newOrd.id.slice(-4).toUpperCase();
       setOrderSuccessToast(`Order #${orderTag} Sent to Kitchen!`);
+      setActiveTab('ORDERS');
       setTimeout(() => setOrderSuccessToast(null), 5000);
     } catch (err: any) {
       console.error('[GuestPortal] Order submission error:', err);
@@ -832,12 +921,55 @@ export default function GuestPortalPage() {
         {/* Tab 2: FOOD & DINING */}
         {activeTab === 'FOOD' && (
           <div className="p-4 space-y-4 flex-1 overflow-y-auto">
-            {/* Category horizontal scroll */}
-            <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
+            {/* Active order quick notification pill */}
+            {myOrders.length > 0 && (
+              <button
+                onClick={() => setActiveTab('ORDERS')}
+                className="w-full p-2.5 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-between text-xs text-amber-900 font-bold hover:bg-amber-100/70 transition-colors cursor-pointer"
+              >
+                <div className="flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-amber-600 animate-pulse" />
+                  <span>{myOrders.length} {myOrders.length === 1 ? 'order' : 'orders'} in kitchen workflow</span>
+                </div>
+                <span className="text-amber-700 underline text-[11px]">Track Status &rarr;</span>
+              </button>
+            )}
+
+            {/* Menu Search Bar */}
+            <div className="relative">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
+              <input
+                type="text"
+                placeholder="Search food, beverages, snacks..."
+                value={menuSearch}
+                onChange={e => setMenuSearch(e.target.value)}
+                className="w-full pl-9 pr-8 py-2 rounded-xl border border-stone-200 text-xs focus:ring-1 focus:ring-[#c9a84c] focus:outline-none bg-stone-50"
+              />
+              {menuSearch && (
+                <button
+                  onClick={() => setMenuSearch('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Filter Pills: Veg-only & Categories */}
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+              <button
+                onClick={() => setVegOnly(!vegOnly)}
+                className={`px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition-colors flex items-center gap-1.5 cursor-pointer ${
+                  vegOnly ? 'bg-emerald-700 text-white shadow-xs' : 'bg-stone-100 text-stone-700 border border-stone-200'
+                }`}
+              >
+                <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+                Veg Only
+              </button>
               <button
                 onClick={() => setSelectedCategory('ALL')}
                 className={`px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition-colors cursor-pointer ${
-                  selectedCategory === 'ALL' ? 'bg-[#1a2744] text-white' : 'bg-stone-100 text-stone-700'
+                  selectedCategory === 'ALL' ? 'bg-[#1a2744] text-white shadow-xs' : 'bg-stone-100 text-stone-700'
                 }`}
               >
                 All Menu
@@ -847,7 +979,7 @@ export default function GuestPortalPage() {
                   key={c.id}
                   onClick={() => setSelectedCategory(c.id)}
                   className={`px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition-colors cursor-pointer ${
-                    selectedCategory === c.id ? 'bg-[#c9a84c] text-white' : 'bg-stone-100 text-stone-700'
+                    selectedCategory === c.id ? 'bg-[#c9a84c] text-white shadow-xs' : 'bg-stone-100 text-stone-700'
                   }`}
                 >
                   {c.name}
@@ -857,9 +989,21 @@ export default function GuestPortalPage() {
 
             {/* Menu Items List */}
             <div className="space-y-3">
-              {menuItems
-                .filter(i => selectedCategory === 'ALL' || i.category_id === selectedCategory)
-                .map(item => {
+              {filteredMenuItems.length === 0 ? (
+                <div className="p-8 text-center text-stone-400 space-y-2">
+                  <UtensilsCrossed className="w-8 h-8 mx-auto text-stone-300" />
+                  <p className="text-xs">No menu items match your search or filters.</p>
+                  {(menuSearch || vegOnly || selectedCategory !== 'ALL') && (
+                    <button
+                      onClick={() => { setMenuSearch(''); setVegOnly(false); setSelectedCategory('ALL'); }}
+                      className="text-xs font-bold text-[#c9a84c] hover:underline cursor-pointer"
+                    >
+                      Reset filters
+                    </button>
+                  )}
+                </div>
+              ) : (
+                filteredMenuItems.map(item => {
                   const qty = cart[item.id] || 0;
                   return (
                     <div key={item.id} className="p-3 rounded-2xl border border-stone-200 bg-white flex justify-between items-center gap-3 shadow-2xs">
@@ -907,19 +1051,48 @@ export default function GuestPortalPage() {
                       </div>
                     </div>
                   );
-                })}
+                })
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Tab 3: ORDERS & LIVE KITCHEN DISPATCH TRACKER */}
+        {activeTab === 'ORDERS' && (
+          <div className="p-4 space-y-4 flex-1 overflow-y-auto">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-sm text-stone-900">Your Dining Orders</h3>
+                <p className="text-[11px] text-stone-500">Live order status from kitchen to Room {room?.number || ''}</p>
+              </div>
+              <button
+                onClick={handleRefreshOrders}
+                disabled={isRefreshingOrders}
+                className="p-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 transition-colors cursor-pointer"
+                title="Refresh order status"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingOrders ? 'animate-spin text-[#c9a84c]' : ''}`} />
+              </button>
             </div>
 
-            {/* Live Visual Order Tracker Timeline for Active Orders */}
-            {myOrders.length > 0 && (
-              <div className="pt-4 border-t border-stone-200 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-stone-500">Live Kitchen Dispatch Tracker</h4>
-                  <span className="text-[10px] text-amber-700 font-bold bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
-                    Live Sync
-                  </span>
+            {myOrders.length === 0 ? (
+              <div className="p-8 text-center bg-stone-50 border border-dashed border-stone-200 rounded-2xl space-y-3 my-6">
+                <div className="w-12 h-12 rounded-full bg-amber-50 text-amber-700 flex items-center justify-center mx-auto">
+                  <UtensilsCrossed className="w-6 h-6" />
                 </div>
-
+                <div>
+                  <h4 className="font-bold text-sm text-stone-900">No Orders Placed Yet</h4>
+                  <p className="text-xs text-stone-500 mt-0.5">Explore our kitchen menu and place your room service order.</p>
+                </div>
+                <button
+                  onClick={() => setActiveTab('FOOD')}
+                  className="px-4 py-2 rounded-xl bg-[#c9a84c] text-white font-bold text-xs hover:bg-[#b8973d] transition-colors shadow-xs cursor-pointer"
+                >
+                  Browse Dining Menu
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-4">
                 {myOrders.map(ord => {
                   const steps = [
                     { id: 'PENDING', label: 'Placed', icon: Clock },
@@ -929,57 +1102,99 @@ export default function GuestPortalPage() {
                     { id: 'DELIVERED', label: 'Delivered', icon: Check },
                   ];
 
-                  const currentIdx = steps.findIndex(s => s.id === ord.status);
-                  const activeIdx = currentIdx === -1 ? (ord.status === 'CANCELLED' ? 0 : 4) : currentIdx;
+                  const statusUpper = (ord.status || '').toUpperCase();
+                  const currentIdx = steps.findIndex(s => s.id === statusUpper);
+                  const activeIdx = currentIdx === -1 ? (statusUpper === 'CANCELLED' ? 0 : 4) : currentIdx;
+                  const isCancelled = statusUpper === 'CANCELLED';
 
                   return (
                     <div key={ord.id} className="p-4 rounded-2xl bg-white border border-stone-200 shadow-xs space-y-3">
                       <div className="flex justify-between items-start">
                         <div>
-                          <span className="font-extrabold text-sm text-stone-900">Order #{ord.id.slice(-4).toUpperCase()}</span>
-                          <div className="text-[11px] text-stone-500">{(ord.items || []).map(i => `${i.quantity}x ${i.name}`).join(', ')}</div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-extrabold text-sm text-stone-900">Order #{ord.id.slice(-4).toUpperCase()}</span>
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              isCancelled ? 'bg-rose-100 text-rose-700' :
+                              statusUpper === 'DELIVERED' ? 'bg-emerald-100 text-emerald-800' :
+                              'bg-amber-100 text-amber-800'
+                            }`}>
+                              {ord.status}
+                            </span>
+                          </div>
+                          <span className="text-[10px] text-stone-400 block mt-0.5">
+                            {ord.created_at ? new Date(ord.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Recently'}
+                          </span>
                         </div>
-                        <span className="font-bold text-xs text-[#c9a84c] font-mono">₹{ord.total}</span>
+                        <div className="text-right">
+                          <span className="font-bold text-sm text-[#c9a84c] font-mono">₹{ord.total || ord.total_amount || 0}</span>
+                          <span className="text-[10px] text-stone-400 block">
+                            {ord.charge_to_room !== false ? 'Room Folio' : (ord.payment_status || 'Paid')}
+                          </span>
+                        </div>
                       </div>
 
                       {/* 5-step Stepper */}
-                      <div className="pt-2">
-                        <div className="flex items-center justify-between relative">
-                          <div className="absolute left-3 right-3 top-3.5 h-0.5 bg-stone-200 -z-0" />
-                          <div 
-                            className="absolute left-3 top-3.5 h-0.5 bg-emerald-500 -z-0 transition-all duration-500" 
-                            style={{ width: `${(activeIdx / (steps.length - 1)) * 90}%` }}
-                          />
+                      {!isCancelled ? (
+                        <div className="pt-2">
+                          <div className="flex items-center justify-between relative">
+                            <div className="absolute left-3 right-3 top-3.5 h-0.5 bg-stone-200 -z-0" />
+                            <div 
+                              className="absolute left-3 top-3.5 h-0.5 bg-emerald-500 -z-0 transition-all duration-500" 
+                              style={{ width: `${(activeIdx / (steps.length - 1)) * 90}%` }}
+                            />
 
-                          {steps.map((st, idx) => {
-                            const isPast = idx < activeIdx;
-                            const isCurrent = idx === activeIdx;
-                            const StepIcon = st.icon;
+                            {steps.map((st, idx) => {
+                              const isPast = idx < activeIdx;
+                              const isCurrent = idx === activeIdx;
+                              const StepIcon = st.icon;
 
-                            return (
-                              <div key={st.id} className="flex flex-col items-center z-10">
-                                <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
-                                  isPast ? 'bg-emerald-600 text-white shadow-xs' :
-                                  isCurrent ? 'bg-[#c9a84c] text-white ring-4 ring-[#c9a84c]/20' :
-                                  'bg-white border-2 border-stone-300 text-stone-400'
-                                }`}>
-                                  {isPast ? <Check className="w-3.5 h-3.5" /> : <StepIcon className="w-3.5 h-3.5" />}
+                              return (
+                                <div key={st.id} className="flex flex-col items-center z-10">
+                                  <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
+                                    isPast ? 'bg-emerald-600 text-white shadow-xs' :
+                                    isCurrent ? 'bg-[#c9a84c] text-white ring-4 ring-[#c9a84c]/20' :
+                                    'bg-white border-2 border-stone-300 text-stone-400'
+                                  }`}>
+                                    {isPast ? <Check className="w-3.5 h-3.5" /> : <StepIcon className="w-3.5 h-3.5" />}
+                                  </div>
+                                  <span className={`text-[9px] mt-1 text-center font-medium ${
+                                    isCurrent ? 'text-stone-900 font-bold' :
+                                    isPast ? 'text-emerald-700' : 'text-stone-400'
+                                  }`}>
+                                    {st.label}
+                                  </span>
                                 </div>
-                                <span className={`text-[9px] mt-1 text-center font-medium ${
-                                  isCurrent ? 'text-stone-900 font-bold' :
-                                  isPast ? 'text-emerald-700' : 'text-stone-400'
-                                }`}>
-                                  {st.label}
-                                </span>
-                              </div>
-                            );
-                          })}
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="p-2 rounded-xl bg-rose-50 text-rose-700 text-xs font-semibold text-center">
+                          This order was cancelled by front desk or kitchen.
+                        </div>
+                      )}
+
+                      {/* Item Breakdown */}
+                      <div className="divide-y divide-stone-100 bg-stone-50/70 p-2.5 rounded-xl border border-stone-100 space-y-1">
+                        {(ord.items || []).map((it, idx) => (
+                          <div key={it.id || idx} className="flex justify-between items-center text-xs py-1">
+                            <span className="text-stone-800">
+                              <strong>{it.quantity}x</strong> {it.name}
+                            </span>
+                            <span className="font-mono text-stone-600 text-[11px]">
+                              ₹{it.total || (it.unit_price ? it.unit_price * it.quantity : 0)}
+                            </span>
+                          </div>
+                        ))}
+                        <div className="pt-1.5 flex justify-between items-center text-[11px] font-bold text-stone-900 border-t border-stone-200">
+                          <span>Total (incl. GST)</span>
+                          <span>₹{ord.total || ord.total_amount}</span>
                         </div>
                       </div>
 
                       {ord.special_instructions && (
                         <div className="text-[11px] text-stone-600 bg-stone-50 p-2 rounded-lg border border-stone-100">
-                          <strong>Notes:</strong> {ord.special_instructions}
+                          <strong>Kitchen Notes:</strong> {ord.special_instructions}
                         </div>
                       )}
                     </div>
@@ -990,38 +1205,78 @@ export default function GuestPortalPage() {
           </div>
         )}
 
-        {/* Tab 3: SERVICES */}
+        {/* Tab 4: SERVICES */}
         {activeTab === 'SERVICES' && (
           <div className="p-4 space-y-4 flex-1 overflow-y-auto">
-            <h3 className="font-bold text-sm text-stone-900">In-Room Amenities & Housekeeping</h3>
+            <div>
+              <h3 className="font-bold text-sm text-stone-900">In-Room Amenities & Services</h3>
+              <p className="text-[11px] text-stone-500">Fast assistance delivered directly to Room {room?.number || ''}</p>
+            </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              {services.map(s => (
+            {/* Department filter pills */}
+            <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+              {[
+                { id: 'ALL', label: 'All Services' },
+                { id: 'HOUSEKEEPING', label: 'Housekeeping' },
+                { id: 'MAINTENANCE', label: 'Maintenance' },
+                { id: 'CONCIERGE', label: 'Concierge' },
+              ].map(f => (
                 <button
-                  key={s.id}
-                  onClick={() => setSelectedService(s)}
-                  className="p-3.5 rounded-2xl border border-stone-200 bg-white hover:border-[#c9a84c] hover:shadow-xs transition-all text-left space-y-1 cursor-pointer"
+                  key={f.id}
+                  onClick={() => setServiceCategory(f.id as any)}
+                  className={`px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition-colors cursor-pointer ${
+                    serviceCategory === f.id ? 'bg-[#1a2744] text-white shadow-xs' : 'bg-stone-100 text-stone-700 hover:bg-stone-200'
+                  }`}
                 >
-                  <Sparkles className="w-4 h-4 text-[#c9a84c]" />
-                  <div className="font-bold text-xs text-stone-900">{s.name}</div>
-                  <div className="text-[10px] text-stone-500 line-clamp-1">{s.description || 'Complimentary service'}</div>
+                  {f.label}
                 </button>
               ))}
+            </div>
+
+            {/* Services Grid */}
+            <div className="grid grid-cols-2 gap-3">
+              {filteredServices.map(s => {
+                const cat = (s.category || '').toUpperCase();
+                const Icon = cat.includes('MAINTENANCE') ? Wrench : Sparkles;
+
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => setSelectedService(s)}
+                    className="p-3.5 rounded-2xl border border-stone-200 bg-white hover:border-[#c9a84c] hover:shadow-xs transition-all text-left space-y-1 cursor-pointer flex flex-col justify-between"
+                  >
+                    <div>
+                      <Icon className="w-4 h-4 text-[#c9a84c] mb-1.5" />
+                      <div className="font-bold text-xs text-stone-900 leading-tight">{s.name}</div>
+                      <div className="text-[10px] text-stone-500 line-clamp-2 mt-0.5">{s.description || 'Complimentary service'}</div>
+                    </div>
+                    <div className="pt-2 text-[10px] font-bold text-[#c9a84c] flex items-center justify-between">
+                      <span>{s.price && s.price > 0 ? `₹${s.price}` : 'Complimentary'}</span>
+                      <span className="text-[10px] bg-amber-50 px-1.5 py-0.5 rounded">Request &rarr;</span>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
 
             {/* Active Requests Tracking */}
             {myRequests.length > 0 && (
               <div className="pt-4 border-t border-stone-200 space-y-2">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-stone-500">Recent Service Status</h4>
+                <div className="flex justify-between items-center">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-stone-500">Recent Service Status</h4>
+                  <span className="text-[10px] text-stone-400">Front Desk Live Sync</span>
+                </div>
                 <div className="space-y-2">
                   {myRequests.map(req => (
                     <div key={req.id} className="p-3 rounded-xl bg-stone-50 border border-stone-200 text-xs flex justify-between items-center">
                       <div>
                         <div className="font-bold text-stone-900">{req.title}</div>
-                        <div className="text-[11px] text-stone-500">{req.description}</div>
+                        <div className="text-[11px] text-stone-500 line-clamp-1">{req.description}</div>
                       </div>
                       <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                        req.status === 'COMPLETED' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                        req.status === 'COMPLETED' ? 'bg-emerald-100 text-emerald-800' :
+                        req.status === 'IN_PROGRESS' ? 'bg-sky-100 text-sky-800' :
+                        'bg-amber-100 text-amber-800'
                       }`}>
                         {req.status}
                       </span>
@@ -1224,10 +1479,10 @@ export default function GuestPortalPage() {
           {[
             { id: 'HOME', label: 'Home', icon: Building2 },
             { id: 'FOOD', label: 'Dining', icon: UtensilsCrossed },
-            { id: 'SERVICES', label: 'Services', icon: Sparkles },
+            { id: 'ORDERS', label: 'Orders', icon: Clock, badge: myOrders.length > 0 ? myOrders.length : undefined },
+            { id: 'SERVICES', label: 'Services', icon: Sparkles, badge: myRequests.length > 0 ? myRequests.length : undefined },
             { id: 'CHAT', label: 'Concierge', icon: MessageSquare },
             { id: 'STAY', label: 'My Stay', icon: FileText },
-            { id: 'CONTACT', label: 'Desk', icon: Phone },
           ].map(tab => {
             const Icon = tab.icon;
             const active = activeTab === tab.id;
@@ -1235,11 +1490,18 @@ export default function GuestPortalPage() {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id as any)}
-                className={`flex flex-col items-center justify-center flex-1 py-1 rounded-xl transition-colors cursor-pointer ${
+                className={`flex flex-col items-center justify-center flex-1 py-1 rounded-xl transition-colors cursor-pointer relative ${
                   active ? 'text-[#c9a84c] font-bold' : 'text-stone-400 hover:text-stone-700'
                 }`}
               >
-                <Icon className="w-4 h-4" />
+                <div className="relative">
+                  <Icon className="w-4 h-4" />
+                  {tab.badge !== undefined && (
+                    <span className="absolute -top-1 -right-2 w-3.5 h-3.5 bg-[#c9a84c] text-stone-950 font-bold text-[9px] rounded-full flex items-center justify-center">
+                      {tab.badge}
+                    </span>
+                  )}
+                </div>
                 <span className="text-[10px] mt-0.5">{tab.label}</span>
               </button>
             );

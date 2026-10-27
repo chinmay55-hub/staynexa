@@ -821,7 +821,22 @@ export const supabaseQrService = {
 
   async generate(hotelId: string, roomId?: string, customToken?: string): Promise<QRCode> {
     const client = getClient();
-    const token = customToken || `gp-r${roomId ? roomId.slice(-3) : 'hotel'}-${Math.random().toString(36).slice(2, 8)}`;
+    // Cryptographically secure, unpredictable token
+    const randomEntropy = typeof crypto !== 'undefined' && crypto.randomUUID 
+      ? crypto.randomUUID().replace(/-/g, '').slice(0, 16)
+      : Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
+    const token = customToken || `sn-${randomEntropy}`;
+
+    // Deactivate previous active QR code for this specific room to prevent duplicate active tokens
+    if (roomId) {
+      await client
+        .from('qr_codes')
+        .update({ is_active: false })
+        .eq('hotel_id', hotelId)
+        .eq('room_id', roomId)
+        .eq('is_active', true);
+    }
+
     const { data, error } = await client
       .from('qr_codes')
       .insert({

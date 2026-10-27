@@ -17,7 +17,9 @@ import {
   roomService, 
   maintenanceService,
   activityLogService,
-  reloadDemoStoreFromStorage
+  reloadDemoStoreFromStorage,
+  serviceRequestService,
+  demoDataService
 } from '../../services/demoDataService';
 import { realtimeSync } from '../../services/realtimeSync';
 import type { HousekeepingTask, Room, Priority } from '../../types';
@@ -33,18 +35,37 @@ import {
   useToast
 } from '../../components/ui';
 
-export default function HousekeepingPage({ defaultTab = 'TASKS' }: { defaultTab?: 'TASKS' | 'ROOMS' } = {}) {
+export default function HousekeepingPage({ defaultTab = 'TASKS' }: { defaultTab?: 'TASKS' | 'REQUESTS' | 'ROOMS' } = {}) {
   const { user } = useAuth();
   const hotelId = user?.hotel_id || 'hotel-001';
 
+  const isHousekeepingReq = (r: any) => {
+    const cat = (r.service?.category || '').toUpperCase();
+    const title = (r.title || '').toLowerCase();
+    const desc = (r.description || '').toLowerCase();
+    return cat.includes('HOUSEKEEPING') || title.includes('towel') || title.includes('clean') || title.includes('linen') || title.includes('toilet') || title.includes('water') || desc.includes('towel') || desc.includes('clean');
+  };
+
   const [tasks, setTasks] = useState(() => housekeepingService.getTasks(hotelId));
   const [rooms, setRooms] = useState(() => roomService.getAll(hotelId));
-  const [activeTab, setActiveTab] = useState<'TASKS' | 'ROOMS'>(defaultTab);
+  const [guestRequests, setGuestRequests] = useState(() => serviceRequestService.getAll(hotelId).filter(isHousekeepingReq));
+  const [activeTab, setActiveTab] = useState<'TASKS' | 'REQUESTS' | 'ROOMS'>(defaultTab);
   const [search, setSearch] = useState('');
 
   useEffect(() => {
     setActiveTab(defaultTab);
   }, [defaultTab]);
+
+  // Initial Supabase Data Synchronization
+  useEffect(() => {
+    if (hotelId) {
+      demoDataService.syncFromSupabase(hotelId).then(() => {
+        setTasks([...housekeepingService.getTasks(hotelId)]);
+        setRooms([...roomService.getAll(hotelId)]);
+        setGuestRequests(serviceRequestService.getAll(hotelId).filter(isHousekeepingReq));
+      });
+    }
+  }, [hotelId]);
 
   // Realtime WebSocket & Cross-Tab State Synchronization
   useEffect(() => {
@@ -54,6 +75,7 @@ export default function HousekeepingPage({ defaultTab = 'TASKS' }: { defaultTab?
       reloadDemoStoreFromStorage();
       setTasks([...housekeepingService.getTasks(hotelId)]);
       setRooms([...roomService.getAll(hotelId)]);
+      setGuestRequests(serviceRequestService.getAll(hotelId).filter(isHousekeepingReq));
     };
 
     const unsubNewTask = realtimeSync.subscribe('NEW_HOUSEKEEPING_TASK', ({ task }) => {
@@ -72,6 +94,18 @@ export default function HousekeepingPage({ defaultTab = 'TASKS' }: { defaultTab?
       setRooms([...roomService.getAll(hotelId)]);
     });
 
+    const unsubNewReq = realtimeSync.subscribe('NEW_SERVICE_REQUEST', ({ request }) => {
+      if (request.hotel_id === hotelId && isHousekeepingReq(request)) {
+        setGuestRequests(prev => [request, ...prev.filter(r => r.id !== request.id)]);
+      }
+    });
+
+    const unsubReqStatus = realtimeSync.subscribe('REQUEST_STATUS_CHANGED', ({ requestId, status, request }) => {
+      setGuestRequests(prev =>
+        prev.map(r => (r.id === requestId ? { ...r, ...request, status } : r))
+      );
+    });
+
     const handleStorage = (e: StorageEvent) => {
       if (e.key === 'staynexa_demo_store' || e.key === 'staynexa_global_sync') {
         refreshHousekeeping();
@@ -84,6 +118,8 @@ export default function HousekeepingPage({ defaultTab = 'TASKS' }: { defaultTab?
       disconnectSupabase();
       unsubNewTask();
       unsubUpdateTask();
+      unsubNewReq();
+      unsubReqStatus();
     };
   }, [hotelId]);
 
@@ -230,15 +266,23 @@ export default function HousekeepingPage({ defaultTab = 'TASKS' }: { defaultTab?
       <div className="flex gap-2 border-b border-stone-200">
         <button
           onClick={() => setActiveTab('TASKS')}
-          className={`pb-3 px-4 text-xs font-semibold border-b-2 transition-colors ${
+          className={`pb-3 px-4 text-xs font-semibold border-b-2 transition-colors cursor-pointer ${
             activeTab === 'TASKS' ? 'border-[#c9a84c] text-stone-900 font-bold' : 'border-transparent text-stone-500 hover:text-stone-800'
           }`}
         >
           Active Tasks Queue ({pendingTasks.length})
         </button>
         <button
+          onClick={() => setActiveTab('REQUESTS')}
+          className={`pb-3 px-4 text-xs font-semibold border-b-2 transition-colors cursor-pointer ${
+            activeTab === 'REQUESTS' ? 'border-[#c9a84c] text-stone-900 font-bold' : 'border-transparent text-stone-500 hover:text-stone-800'
+          }`}
+        >
+          Guest Amenity Requests ({guestRequests.filter(r => r.status !== 'COMPLETED').length})
+        </button>
+        <button
           onClick={() => setActiveTab('ROOMS')}
-          className={`pb-3 px-4 text-xs font-semibold border-b-2 transition-colors ${
+          className={`pb-3 px-4 text-xs font-semibold border-b-2 transition-colors cursor-pointer ${
             activeTab === 'ROOMS' ? 'border-[#c9a84c] text-stone-900 font-bold' : 'border-transparent text-stone-500 hover:text-stone-800'
           }`}
         >
@@ -343,6 +387,74 @@ export default function HousekeepingPage({ defaultTab = 'TASKS' }: { defaultTab?
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+        </div>
+      ) : activeTab === 'REQUESTS' ? (
+        <div className="space-y-4">
+          {guestRequests.length === 0 ? (
+            <Card className="border-stone-200">
+              <CardContent className="p-8 text-center text-stone-500">
+                <Sparkles className="w-8 h-8 text-stone-300 mx-auto mb-2" />
+                <p className="text-sm font-semibold">No active housekeeping requests from guests.</p>
+                <p className="text-xs text-stone-400 mt-1">When in-house guests request towels, water, or room cleaning from the guest portal, they appear here live.</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {guestRequests.map(req => {
+                const isPending = req.status === 'PENDING' || req.status === 'ASSIGNED' || req.status === 'IN_PROGRESS';
+                return (
+                  <Card key={req.id} className="border-stone-200 shadow-xs flex flex-col justify-between">
+                    <CardContent className="p-4 space-y-3">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <span className="font-extrabold text-lg text-stone-900 block">
+                            Room {req.room?.number || 'Guest'}
+                          </span>
+                          <span className="text-xs text-[#c9a84c] font-bold">{req.title}</span>
+                        </div>
+                        <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                          req.status === 'COMPLETED' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                        }`}>
+                          {req.status}
+                        </span>
+                      </div>
+
+                      {req.description && (
+                        <p className="text-xs text-stone-600 bg-stone-50 p-2.5 rounded-lg border border-stone-100">
+                          {req.description}
+                        </p>
+                      )}
+
+                      <div className="text-[10px] text-stone-400 flex justify-between items-center pt-1 border-t border-stone-100">
+                        <span>Requested: {new Date(req.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                        <span className="font-bold text-stone-600">Priority: {req.priority}</span>
+                      </div>
+
+                      {isPending && (
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          className="w-full mt-2"
+                          iconLeft={<Check className="w-3.5 h-3.5" />}
+                          onClick={async () => {
+                            try {
+                              await serviceRequestService.updateAsync(req.id, { status: 'COMPLETED' });
+                              setGuestRequests(serviceRequestService.getAll(hotelId).filter(isHousekeepingReq));
+                              toast.success('Request fulfilled', `${req.title} for Room ${req.room?.number || ''} completed`);
+                            } catch (err: any) {
+                              toast.error('Failed to update request', err?.message || 'Update failed');
+                            }
+                          }}
+                        >
+                          Mark Delivered / Fulfilled
+                        </Button>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
           )}
         </div>
