@@ -90,8 +90,6 @@ describe('GUEST PORTAL & QR-TO-KDS OPERATIONAL PIPELINE', () => {
         special_instructions: 'Extra crispy',
         items: [
           {
-            id: 'item-1',
-            order_id: '',
             menu_item_id: 'menu-001',
             name: 'Crispy Fries',
             quantity: 2,
