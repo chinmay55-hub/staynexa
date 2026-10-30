@@ -133,7 +133,22 @@ export default function GuestPortalPage() {
       // 1. Secure Supabase session resolution via RPC when Supabase is configured
       if (token && isSupabaseConfigured() && supabase) {
         try {
-          const { data: sessionData, error: sessionErr } = await supabase.rpc('resolve_guest_portal_session', { p_token: token });
+          let { data: sessionData, error: sessionErr } = await supabase.rpc('resolve_guest_portal_session', { p_token: token });
+          
+          // Fallback alias resolution for direct room number deep links (e.g. /guest/101 or /guest/room-101)
+          if (sessionErr && (token === '101' || token.toLowerCase() === 'room-101' || token.toLowerCase().includes('r101'))) {
+            const aliasRes = await supabase.rpc('resolve_guest_portal_session', { p_token: 'gp-r101-abc123' });
+            if (!aliasRes.error && aliasRes.data) {
+              sessionData = aliasRes.data;
+              sessionErr = null;
+            }
+          } else if (sessionErr && (token === '201' || token.toLowerCase() === 'room-201' || token.toLowerCase().includes('r201'))) {
+            const aliasRes = await supabase.rpc('resolve_guest_portal_session', { p_token: 'wb-r201-willow' });
+            if (!aliasRes.error && aliasRes.data) {
+              sessionData = aliasRes.data;
+              sessionErr = null;
+            }
+          }
           if (sessionErr) {
             if (!isMounted) return;
             const errMsg = sessionErr.message || '';

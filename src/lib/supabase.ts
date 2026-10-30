@@ -4,9 +4,22 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 // Environment variables
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const rawSupabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const appMode = import.meta.env.VITE_APP_MODE;
+
+/**
+ * Sanitizes Supabase URL by trimming, removing trailing slashes, and stripping
+ * accidental /rest/v1 or /rest/v1/ suffix often copied from Supabase API settings.
+ */
+export function sanitizeSupabaseUrl(url: string | undefined): string | undefined {
+  if (!url) return url;
+  let cleaned = url.trim().replace(/\/+$/, '');
+  cleaned = cleaned.replace(/\/rest\/v1\/?$/i, '');
+  return cleaned.replace(/\/+$/, '');
+}
+
+const supabaseUrl = sanitizeSupabaseUrl(rawSupabaseUrl);
 
 // Validate that service role key is NEVER exposed on client
 const serviceRoleKeys = ['SUPABASE_SERVICE_ROLE_KEY', 'VITE_SUPABASE_SERVICE_ROLE_KEY', 'SERVICE_ROLE_KEY'];
