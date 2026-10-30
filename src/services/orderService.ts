@@ -332,17 +332,29 @@ export const orderService = {
       timeFields.payment_status = 'cancelled';
     }
 
-    const { error: updateErr } = await supabase
-      .from('orders')
-      .update({
-        status: status.toUpperCase(),
-        ...timeFields,
-        updated_at: nowISO(),
-      })
-      .eq('id', id);
+    const updatePayload = {
+      status: status.toUpperCase(),
+      ...timeFields,
+      updated_at: nowISO(),
+    };
+
+    let updateErr: any = null;
+    try {
+      const res = await supabase.from('orders').update(updatePayload).eq('id', id);
+      updateErr = res.error;
+    } catch (fetchErr: any) {
+      // Retry once on transient network glitch or connection reset
+      try {
+        await new Promise(r => setTimeout(r, 200));
+        const res = await supabase.from('orders').update(updatePayload).eq('id', id);
+        updateErr = res.error;
+      } catch (retryErr: any) {
+        updateErr = retryErr || fetchErr;
+      }
+    }
 
     if (updateErr) {
-      throw new Error(`Failed to update order status in database: ${updateErr.message}`);
+      throw new Error(`Failed to update order status in database: ${updateErr?.message || updateErr}`);
     }
 
     let updated: Order | undefined;
@@ -468,7 +480,12 @@ export const orderService = {
    * Fetch authenticated status of a guest order using tracking token
    */
   fetchGuestOrderStatus: async (orderId: string, trackingToken: string): Promise<any> => {
+    const isUUID = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
     if (isSupabaseConfigured() && supabase) {
+      if (!isUUID(orderId) || !isUUID(trackingToken)) {
+        // Safe rejection: invalid UUID tokens cannot match database records
+        return null;
+      }
       const { data, error } = await supabase.rpc('get_guest_order_status', {
         p_order_id: orderId,
         p_tracking_token: trackingToken,

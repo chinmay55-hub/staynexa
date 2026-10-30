@@ -407,26 +407,27 @@ export const supabaseOrderService = {
     const client = getClient();
     const { items, ...orderRecord } = orderData;
     
-    // 1. Try public SECURITY DEFINER RPC endpoint 'create_guest_order'
-    try {
-      const { data: rpcData, error: rpcErr } = await client.rpc('create_guest_order', {
-        p_hotel_id: orderRecord.hotel_id,
-        p_room_id: orderRecord.room_id || null,
-        p_guest_id: orderRecord.guest_id || null,
-        p_reservation_id: orderRecord.reservation_id || null,
-        p_type: orderRecord.type || 'ROOM_SERVICE',
-        p_subtotal: orderRecord.subtotal,
-        p_tax_amount: orderRecord.tax_amount,
-        p_total: orderRecord.total,
-        p_charge_to_room: orderRecord.charge_to_room ?? true,
-        p_special_instructions: orderRecord.special_instructions || null,
-        p_items: items || [],
-      });
-      if (!rpcErr && rpcData && rpcData.id) {
-        return rpcData as Order;
+    // 1. If guest QR token is provided, use the secure server-calculated RPC
+    const guestToken = (orderData as any).token;
+    if (guestToken) {
+      try {
+        const { data: rpcData, error: rpcErr } = await client.rpc('create_guest_order', {
+          p_token: guestToken,
+          p_type: orderRecord.type || 'ROOM_SERVICE',
+          p_charge_to_room: orderRecord.charge_to_room ?? true,
+          p_special_instructions: orderRecord.special_instructions || null,
+          p_items: (items || []).map(it => ({
+            menu_item_id: it.menu_item_id,
+            quantity: it.quantity,
+            notes: it.notes || null,
+          })),
+        });
+        if (!rpcErr && rpcData && rpcData.id) {
+          return rpcData as Order;
+        }
+      } catch (rpcException) {
+        console.warn('[supabaseOrderService] RPC create_guest_order failed, falling back:', rpcException);
       }
-    } catch (rpcException) {
-      console.warn('[supabaseOrderService] RPC create_guest_order fallback to direct query:', rpcException);
     }
 
     // 2. Direct Table Insert into public.orders

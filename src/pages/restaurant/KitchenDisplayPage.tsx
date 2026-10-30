@@ -138,6 +138,7 @@ export default function KitchenDisplayPage() {
             event: '*',
             schema: 'public',
             table: 'orders',
+            filter: `hotel_id=eq.${hotelId}`,
           },
           (payload) => {
             console.log('[KDS Realtime postgres_changes]', payload.eventType, payload.new);
@@ -823,8 +824,8 @@ function KdsCard({
 
       {/* Items list */}
       <div className="space-y-1.5 py-2 border-y border-white/5 text-sm">
-        {(order.items || []).map(item => (
-          <div key={item.id} className="flex justify-between items-baseline">
+        {(order.items || []).map((item, idx) => (
+          <div key={item.id || item.menu_item_id || `item-${idx}`} className="flex justify-between items-baseline">
             <span className="font-semibold text-white">
               <span className="text-[#c9a84c] font-black mr-2 text-base">{item.quantity}x</span>
               {item.name}

@@ -1483,7 +1483,11 @@ export const serviceRequestService = {
     }
   },
   fetchGuestRequestStatus: async (requestId: string, trackingToken: string): Promise<Partial<ServiceRequest> | null> => {
+    const isUUID = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
     if (!isDemoMode() && supabase) {
+      if (!isUUID(requestId) || !isUUID(trackingToken)) {
+        return null;
+      }
       const { data, error } = await supabase.rpc('get_guest_request_status', {
         p_request_id: requestId,
         p_tracking_token: trackingToken,

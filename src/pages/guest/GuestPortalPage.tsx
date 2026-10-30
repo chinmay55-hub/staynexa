@@ -392,8 +392,27 @@ export default function GuestPortalPage() {
     return () => clearInterval(interval);
   }, [myOrders, myRequests]);
 
-  const branding = hotel ? hotelService.getBranding(hotel.id) : null;
-  const settings = hotel ? hotelService.getSettings(hotel.id) : null;
+  const branding = hotel 
+    ? ((hotel as any).tagline || (hotel as any).primary_color)
+      ? {
+          tagline: (hotel as any).tagline,
+          logo_url: (hotel as any).logo_url,
+          primary_color: (hotel as any).primary_color,
+          accent_color: (hotel as any).accent_color,
+        }
+      : hotelService.getBranding(hotel.id) 
+    : null;
+
+  const settings = hotel 
+    ? ((hotel as any).wifi_name !== undefined)
+      ? {
+          wifi_name: (hotel as any).wifi_name,
+          wifi_password: (hotel as any).wifi_password,
+          allow_room_charge: (hotel as any).allow_room_charge ?? true,
+          google_review_url: (hotel as any).google_review_url || 'https://search.google.com/local/writereview?placeid=staynexa-demo',
+        }
+      : hotelService.getSettings(hotel.id) 
+    : null;
 
   // Cart operations with precision rounding
   const addToCart = (itemId: string) => {
@@ -776,6 +795,9 @@ export default function GuestPortalPage() {
               <div>
                 <h1 className="font-display font-bold text-base leading-tight tracking-wide">{hotel.name}</h1>
                 <p className="text-[11px] opacity-75">{hotel.city}, {hotel.state}</p>
+                {branding?.tagline && (
+                  <p className="text-[10px] opacity-70 italic mt-0.5">{branding.tagline}</p>
+                )}
               </div>
             </div>
 
