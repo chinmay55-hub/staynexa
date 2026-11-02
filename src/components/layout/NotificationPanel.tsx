@@ -6,7 +6,7 @@ import clsx from 'clsx';
 import { formatDistanceToNow } from 'date-fns';
 import type { Notification } from '../../types';
 import { notificationService } from '../../services/demoDataService';
-import { useAuth } from '../../contexts/AuthContext';
+import { useAuth } from '../../contexts/useAuth';
 
 // ─── Icon by type ─────────────────────────────────────────────────────────────
 

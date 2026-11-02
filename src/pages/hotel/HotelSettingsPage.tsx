@@ -11,7 +11,7 @@ import {
   Database,
   RotateCcw
 } from 'lucide-react';
-import { useAuth } from '../../contexts/AuthContext';
+import { useAuth } from '../../contexts/useAuth';
 import { hotelService, resetDemoStore } from '../../services/demoDataService';
 import { isDemoMode } from '../../lib/supabase';
 import type { Hotel, HotelBranding, HotelSettings } from '../../types';

@@ -5,7 +5,7 @@ import {
   Edit2, 
   Archive
 } from 'lucide-react';
-import { useAuth } from '../../contexts/AuthContext';
+import { useAuth } from '../../contexts/useAuth';
 import { roomService, demoDataService } from '../../services/demoDataService';
 import { isDemoMode, isSupabaseConfigured } from '../../lib/supabase';
 import type { Room, RoomStatus, HousekeepingStatus } from '../../types';

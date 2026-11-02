@@ -4,7 +4,7 @@ import {
   Plus, 
   Star
 } from 'lucide-react';
-import { useAuth } from '../../contexts/AuthContext';
+import { useAuth } from '../../contexts/useAuth';
 import { guestService, reservationService } from '../../services/demoDataService';
 import type { Guest } from '../../types';
 import { 

@@ -16,7 +16,7 @@ import {
   Tooltip, 
   ResponsiveContainer 
 } from 'recharts';
-import { useAuth } from '../../contexts/AuthContext';
+import { useAuth } from '../../contexts/useAuth';
 import { 
   hotelService, 
   analyticsService, 

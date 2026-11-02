@@ -1,9 +1,10 @@
 // Auth Context - Dual-mode authentication (Supabase Production + Stateful In-Memory Demo)
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import type { UserRole, Profile } from '../types';
 import { DEMO_PROFILES, DEMO_MEMBERSHIPS } from '../data/demo';
 import { supabase, isDemoMode } from '../lib/supabase';
 import { demoDataService, staffService, hotelService } from '../services/demoDataService';
+import { AuthContext, type AuthContextType } from './useAuth';
 
 export interface AuthUser {
   id: string;
@@ -13,17 +14,6 @@ export interface AuthUser {
   hotel_id?: string;    // Active hotel context (strictly verified via hotel_memberships)
   avatar_url?: string;
 }
-
-interface AuthContextType {
-  user: AuthUser | null;
-  isLoading: boolean;
-  isDemo: boolean;
-  signIn: (email: string, password: string) => Promise<{ error?: string }>;
-  signOut: () => Promise<void>;
-  switchHotel: (hotelId: string) => void;
-}
-
-const AuthContext = createContext<AuthContextType | null>(null);
 
 // Demo credentials map for offline / demo mode
 const DEMO_CREDENTIALS: Record<string, { password: string; userId: string }> = {
@@ -50,7 +40,7 @@ function profileToAuthUser(profile: Profile, hotelId?: string): AuthUser {
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const isDemo = isDemoMode();
-  const [isLoading, setIsLoading] = useState(!isDemo);
+  const [isLoading, setIsLoading] = useState(!isDemo && !!supabase);
   const [user, setUser] = useState<AuthUser | null>(() => {
     // In demo mode, restore from localStorage
     if (isDemo) {
@@ -64,10 +54,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Production Supabase session restoration
   useEffect(() => {
-    if (isDemo || !supabase) {
-      setIsLoading(false);
-      return;
-    }
+    if (isDemo || !supabase) return;
 
     let isMounted = true;
 
@@ -335,10 +322,4 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       {children}
     </AuthContext.Provider>
   );
-}
-
-export function useAuth() {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
-  return ctx;
 }

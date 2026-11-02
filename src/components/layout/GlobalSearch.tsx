@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, X, User, DoorOpen, CalendarDays, Loader2 } from 'lucide-react';
 import clsx from 'clsx';
-import { useAuth } from '../../contexts/AuthContext';
+import { useAuth } from '../../contexts/useAuth';
 import { guestService, reservationService, roomService } from '../../services/demoDataService';
 import type { Guest, Reservation, Room } from '../../types';
 

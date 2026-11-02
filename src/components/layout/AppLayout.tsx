@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { Outlet, Navigate } from 'react-router-dom';
 import clsx from 'clsx';
-import { useAuth } from '../../contexts/AuthContext';
+import { useAuth } from '../../contexts/useAuth';
 import { hotelService } from '../../services/demoDataService';
 import { isDemoMode } from '../../lib/supabase';
 import { Sidebar } from './Sidebar';

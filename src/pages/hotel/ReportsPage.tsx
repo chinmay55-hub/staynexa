@@ -16,7 +16,7 @@ import {
 import { 
   Download
 } from 'lucide-react';
-import { useAuth } from '../../contexts/AuthContext';
+import { useAuth } from '../../contexts/useAuth';
 import { analyticsService } from '../../services/demoDataService';
 import { Card, CardContent, CardHeader, Button, StatCard } from '../../components/ui';
 

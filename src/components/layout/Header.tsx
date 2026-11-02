@@ -3,7 +3,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Search, Bell, ChevronDown, LogOut, User, Settings, FlaskConical } from 'lucide-react';
 import clsx from 'clsx';
-import { useAuth } from '../../contexts/AuthContext';
+import { useAuth } from '../../contexts/useAuth';
 import { notificationService, hotelService } from '../../services/demoDataService';
 import { realtimeSync } from '../../services/realtimeSync';
 import type { Notification } from '../../types';

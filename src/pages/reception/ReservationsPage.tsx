@@ -6,7 +6,7 @@ import {
   LogIn, 
   CheckCircle2
 } from 'lucide-react';
-import { useAuth } from '../../contexts/AuthContext';
+import { useAuth } from '../../contexts/useAuth';
 import { 
   reservationService, 
   roomService, 

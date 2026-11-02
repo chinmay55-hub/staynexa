@@ -8,7 +8,7 @@ import {
   Check,
   Eye
 } from 'lucide-react';
-import { useAuth } from '../../contexts/AuthContext';
+import { useAuth } from '../../contexts/useAuth';
 import { 
   housekeepingService, 
   roomService, 

@@ -12,7 +12,7 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import QRCode from 'qrcode';
-import { useAuth } from '../../contexts/AuthContext';
+import { useAuth } from '../../contexts/useAuth';
 import { qrService, roomService, hotelService, demoDataService } from '../../services/demoDataService';
 import { isDemoMode, isSupabaseConfigured } from '../../lib/supabase';
 import { generateGuestPortalUrl } from '../../utils/qrCode';

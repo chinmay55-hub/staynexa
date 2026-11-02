@@ -5,7 +5,7 @@ import {
   CheckCircle2, 
   Briefcase
 } from 'lucide-react';
-import { useAuth } from '../../contexts/AuthContext';
+import { useAuth } from '../../contexts/useAuth';
 import { staffService } from '../../services/demoDataService';
 import { DEMO_MEMBERSHIPS } from '../../data/demo';
 import type { Profile, UserRole, Department } from '../../types';
