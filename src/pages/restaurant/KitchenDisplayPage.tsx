@@ -16,7 +16,7 @@ import {
   Printer,
   X
 } from 'lucide-react';
-import { useAuth } from '../../contexts/AuthContext';
+import { useAuth } from '../../contexts/useAuth';
 import { orderService, hotelService, reloadDemoStoreFromStorage } from '../../services/demoDataService';
 import { audioService } from '../../services/audioService';
 import { realtimeSync } from '../../services/realtimeSync';
