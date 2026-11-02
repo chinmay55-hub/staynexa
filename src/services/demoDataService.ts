@@ -4,7 +4,7 @@
 
 import type {
   Hotel, HotelBranding, HotelSettings, RoomType, Room, Guest,
-  Reservation, Folio, FolioItem, Payment, Order, OrderItem,
+  Reservation, Folio, FolioItem, Payment, Order,
   MenuCategory, MenuItem, HotelService, ServiceRequest,
   HousekeepingTask, MaintenanceTicket, Department,
   Profile, Notification, QRCode, ActivityLog, Subscription, HotelMembership
@@ -31,7 +31,6 @@ import {
   supabaseGuestService,
   supabaseReservationService,
   supabaseFolioService,
-  supabaseOrderService, 
   supabaseServiceRequestService, 
   supabaseHousekeepingService,
   supabaseMaintenanceService,

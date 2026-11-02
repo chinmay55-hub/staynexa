@@ -176,7 +176,7 @@ describe('SEC-01: UI Mutation Confirmation & Error Handling Audit Suite', () => 
         }
         const checkedIn = await reservationService.checkInAsync(resToUse.id, 'room-101');
         if (checkedIn) secondAttemptSuccess = true;
-      } catch (_err) {
+      } catch {
         secondAttemptSuccess = false;
       }
 

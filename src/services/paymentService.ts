@@ -1,7 +1,7 @@
 // StayNexa Strict Financial & Payment Service
 // Enforces decimal precision (Math.round(val * 100) / 100) with zero floating-point drift
 
-import type { Payment, Folio, FolioItem } from '../types';
+import type { Payment, Folio } from '../types';
 import { folioService } from './demoDataService';
 
 export interface TaxBreakdown {
