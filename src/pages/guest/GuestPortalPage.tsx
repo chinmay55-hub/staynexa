@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { nowMs } from '../../utils/clock';
 import { 
@@ -97,6 +97,7 @@ export default function GuestPortalPage() {
   const [orderSuccessToast, setOrderSuccessToast] = useState<string | null>(null);
   const [orderErrorMsg, setOrderErrorMsg] = useState<string | null>(null);
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
+  const orderIdempotencyKeyRef = useRef<string | null>(null);
   const [isRefreshingOrders, setIsRefreshingOrders] = useState(false);
   const [myOrders, setMyOrders] = useState<Order[]>([]);
 
@@ -555,7 +556,10 @@ export default function GuestPortalPage() {
 
       const isRoomCharge = paymentOption === 'ROOM_CHARGE';
 
+      const idempotencyKey = orderIdempotencyKeyRef.current ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      orderIdempotencyKeyRef.current = idempotencyKey;
       const res = await orderService.placeOrder({
+        idempotencyKey,
         hotel_id: hotel.id,
         room_id: room?.id,
         room_number: room?.number,
@@ -576,6 +580,7 @@ export default function GuestPortalPage() {
         throw new Error(res.error || 'Failed to place order.');
       }
 
+      orderIdempotencyKeyRef.current = null;
       const newOrd = res.order;
 
       // Save tracking token for secure guest status verification

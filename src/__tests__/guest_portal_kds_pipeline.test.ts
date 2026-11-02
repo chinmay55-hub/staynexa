@@ -129,6 +129,38 @@ describe('GUEST PORTAL & QR-TO-KDS OPERATIONAL PIPELINE', () => {
     });
   });
 
+  describe('3b. Duplicate order prevention', () => {
+    it('returns the same order and stores one record when a submission key is repeated', async () => {
+      const hotel = hotelService.getAll()[0];
+      const room = roomService.getAll(hotel.id)[0];
+      const reservation = reservationService.getAll(hotel.id).find(r => r.room_id === room.id) || reservationService.getAll(hotel.id)[0];
+      const before = orderService.getAll(hotel.id).length;
+      const payload = {
+        hotel_id: hotel.id,
+        room_id: room.id,
+        room_number: room.number,
+        reservation_id: reservation.id,
+        guest_id: reservation.guest_id,
+        status: 'PENDING' as const,
+        type: 'ROOM_SERVICE' as const,
+        subtotal: 250,
+        tax_amount: 12.5,
+        total: 262.5,
+        charge_to_room: true,
+        items: [{ menu_item_id: 'menu-001', name: 'Crispy Fries', quantity: 1, unit_price: 250, tax_percent: 5, total: 262.5 }],
+        idempotencyKey: 'test-key-duplicate-1',
+      };
+
+      const first = await orderService.placeOrder(payload);
+      const second = await orderService.placeOrder(payload);
+
+      expect(first.success).toBe(true);
+      expect(second.success).toBe(true);
+      expect(second.order.id).toBe(first.order.id);
+      expect(orderService.getAll(hotel.id).length).toBe(before + 1);
+    });
+  });
+
   describe('4. In-Room Guest Service Requests & Routing', () => {
     it('creates guest service requests and stores tracking token', async () => {
       const hotel = hotelService.getAll()[0];

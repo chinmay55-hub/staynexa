@@ -43,6 +43,16 @@ export function registerOrderStoreAdapter(adapter: StoreAdapter) {
   storeAdapter = adapter;
 }
 
+type GuestOrderInput = Omit<Order, 'id' | 'created_at' | 'updated_at' | 'items'> & {
+  items: Omit<OrderItem, 'id' | 'order_id'>[];
+  room_number?: string;
+  token?: string;
+};
+
+type PlaceOrderResult = { success: boolean; order: Order; trackingToken?: string; error?: string };
+
+const placedOrderRequests = new Map<string, Promise<PlaceOrderResult>>();
+
 export const orderService = {
   getAll: (hotelId: string): Order[] => {
     if (storeAdapter) return storeAdapter.getAll(hotelId);
@@ -385,7 +395,20 @@ export const orderService = {
    * when Supabase is configured. Prices and tenant integrity are verified server-side.
    * Falls back to local in-memory store in demo/offline mode.
    */
-  placeOrder: async (data: Omit<Order, 'id' | 'created_at' | 'updated_at' | 'items'> & { 
+  placeOrder: (data: GuestOrderInput & { idempotencyKey?: string }): Promise<PlaceOrderResult> => {
+    const key = data.idempotencyKey;
+    if (!key) return orderService.dispatchGuestOrder(data);
+    const existing = placedOrderRequests.get(key);
+    if (existing) return existing;
+    const pending = orderService.dispatchGuestOrder(data).then(res => {
+      if (!res.success) placedOrderRequests.delete(key);
+      return res;
+    });
+    placedOrderRequests.set(key, pending);
+    return pending;
+  },
+
+  dispatchGuestOrder: async (data: Omit<Order, 'id' | 'created_at' | 'updated_at' | 'items'> & { 
     items: Omit<OrderItem, 'id' | 'order_id'>[];
     room_number?: string;
     token?: string;
