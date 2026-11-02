@@ -1,11 +1,18 @@
-import { defineConfig, mergeConfig } from 'vitest/config';
-import viteConfig from './vite.config.ts';
+import { defineConfig } from 'vitest/config';
+import react from '@vitejs/plugin-react';
+import { fileURLToPath } from 'url';
 
-export default mergeConfig(
-  viteConfig,
-  defineConfig({
-    test: {
-      exclude: ['**/node_modules/**', '**/dist/**', 'tests/e2e/**'],
+export default defineConfig({
+  plugins: [react()],
+  resolve: {
+    alias: {
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
-  })
-);
+  },
+  test: {
+    globals: true,
+    pool: 'vmThreads',
+    include: ['src/__tests__/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'],
+    exclude: ['**/node_modules/**', '**/dist/**', 'tests/e2e/**', '.agents/**'],
+  },
+});

@@ -20,6 +20,7 @@ import {
   demoDataService
 } from '../../services/demoDataService';
 import { realtimeSync } from '../../services/realtimeSync';
+import { isSameHotel } from '../../utils/tenantId';
 import type { HousekeepingTask, Room, Priority } from '../../types';
 import { 
   Card, 
@@ -76,7 +77,7 @@ export default function HousekeepingPage({ defaultTab = 'TASKS' }: { defaultTab?
     };
 
     const unsubNewTask = realtimeSync.subscribe('NEW_HOUSEKEEPING_TASK', ({ task }) => {
-      if (task.hotel_id === hotelId) {
+      if (isSameHotel(task.hotel_id, hotelId)) {
         setTasks(prev => {
           if (prev.some(t => t.id === task.id)) return prev;
           return [task, ...prev];
@@ -92,7 +93,7 @@ export default function HousekeepingPage({ defaultTab = 'TASKS' }: { defaultTab?
     });
 
     const unsubNewReq = realtimeSync.subscribe('NEW_SERVICE_REQUEST', ({ request }) => {
-      if (request.hotel_id === hotelId && isHousekeepingReq(request)) {
+      if (isSameHotel(request.hotel_id, hotelId) && isHousekeepingReq(request)) {
         setGuestRequests(prev => [request, ...prev.filter(r => r.id !== request.id)]);
       }
     });

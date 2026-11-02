@@ -5,7 +5,12 @@ import {
   Check, 
   ChevronRight, 
   ChevronLeft,
-  Sparkles
+  Sparkles,
+  Plus,
+  Trash2,
+  AlertCircle,
+  RotateCcw,
+  FileText
 } from 'lucide-react';
 import { 
   hotelService, 
@@ -97,7 +102,7 @@ export default function HotelOnboardingPage() {
     phone: '+91 98290 12345',
   });
 
-  const [services] = useState([
+  const [services, setServices] = useState([
     { name: 'Extra Towels & Linens', category: 'Housekeeping' },
     { name: 'Daily Room Cleaning', category: 'Housekeeping' },
     { name: 'Airport / Station Pickup', category: 'Transport' },
@@ -113,6 +118,129 @@ export default function HotelOnboardingPage() {
   const [autoGenerateQrs, setAutoGenerateQrs] = useState(true);
   const [activatedHotelId, setActivatedHotelId] = useState<string | null>(null);
 
+
+  // Manual addition & editing forms state
+  const [showAddRoomType, setShowAddRoomType] = useState(false);
+  const [newRoomType, setNewRoomType] = useState({ name: '', code: '', rate: 4500, max_adults: 2, amenities: 'AC, WiFi' });
+
+  const [showAddRoom, setShowAddRoom] = useState(false);
+  const [newRoom, setNewRoom] = useState({ number: '', floor: 1, type_code: '' });
+
+  const [showAddDept, setShowAddDept] = useState(false);
+  const [newDept, setNewDept] = useState({ name: '', code: '' });
+
+  const [showAddService, setShowAddService] = useState(false);
+  const [newService, setNewService] = useState({ name: '', category: 'Housekeeping' });
+
+  const handleStartBlank = () => {
+    setHotelInfo({
+      name: '',
+      legal_name: '',
+      type: 'HOTEL',
+      address: '',
+      city: '',
+      state: '',
+      country: 'India',
+      pin_code: '',
+      phone: '',
+      email: '',
+      gstin: '',
+      currency: 'INR',
+      timezone: 'Asia/Kolkata',
+      check_in_time: '14:00',
+      check_out_time: '12:00',
+    });
+    setBranding({
+      primary_color: '#1a2744',
+      accent_color: '#c9a84c',
+      tagline: '',
+    });
+    setConfig({
+      wifi_name: '',
+      wifi_password: '',
+      invoice_prefix: 'HTL',
+      default_tax_percent: 18,
+      service_charge_percent: 5,
+      allow_room_charge: true,
+    });
+    setRoomTypes([]);
+    setRooms([]);
+    setDepartments([
+      { name: 'Front Desk', code: 'FD' },
+      { name: 'Housekeeping', code: 'HK' },
+      { name: 'Restaurant & Kitchen', code: 'FB' },
+    ]);
+    setAdminUser({ full_name: '', email: '', phone: '' });
+    setServices([]);
+    setRestaurant({ name: '', open_time: '07:00', close_time: '23:00' });
+  };
+
+  const handleLoadDemoPreset = () => {
+    setHotelInfo({
+      name: 'The Royal Haveli Heritage',
+      legal_name: 'Haveli Hospitality Group LLP',
+      type: 'HOTEL',
+      address: 'Circular Road, Near Clock Tower',
+      city: 'Jaipur',
+      state: 'Rajasthan',
+      country: 'India',
+      pin_code: '302001',
+      phone: '+91 141 2345678',
+      email: 'contact@royalhaveli.in',
+      gstin: '08AABCR1234F1Z9',
+      currency: 'INR',
+      timezone: 'Asia/Kolkata',
+      check_in_time: '14:00',
+      check_out_time: '12:00',
+    });
+    setBranding({
+      primary_color: '#8b263e',
+      accent_color: '#e5b358',
+      tagline: 'Timeless Royal Heritage in the Pink City',
+    });
+    setConfig({
+      wifi_name: 'RoyalHaveli_Guest',
+      wifi_password: 'Haveli@Stay2024',
+      invoice_prefix: 'RH',
+      default_tax_percent: 18,
+      service_charge_percent: 5,
+      allow_room_charge: true,
+    });
+    setRoomTypes([
+      { name: 'Heritage Deluxe Room', code: 'HDR', rate: 5500, max_adults: 2, amenities: 'AC, WiFi, Mini Bar, Safe' },
+      { name: 'Maharaja Suite', code: 'MHS', rate: 14000, max_adults: 3, amenities: 'AC, WiFi, Jacuzzi, Living Room, Butler' },
+    ]);
+    setRooms([
+      { number: '101', floor: 1, type_code: 'HDR' },
+      { number: '102', floor: 1, type_code: 'HDR' },
+      { number: '201', floor: 2, type_code: 'MHS' },
+      { number: '202', floor: 2, type_code: 'MHS' },
+    ]);
+    setDepartments([
+      { name: 'Front Desk', code: 'FD' },
+      { name: 'Housekeeping', code: 'HK' },
+      { name: 'Restaurant & Kitchen', code: 'FB' },
+      { name: 'Engineering Maintenance', code: 'ENG' },
+    ]);
+    setAdminUser({
+      full_name: 'Rajendra Singh',
+      email: 'rajendra@royalhaveli.in',
+      phone: '+91 98290 12345',
+    });
+    setServices([
+      { name: 'Extra Towels & Linens', category: 'Housekeeping' },
+      { name: 'Daily Room Cleaning', category: 'Housekeeping' },
+      { name: 'Airport / Station Pickup', category: 'Transport' },
+      { name: 'Heritage Walking Tour', category: 'Concierge' },
+    ]);
+    setRestaurant({
+      name: 'Darbar Fine Dining & Rooftop',
+      open_time: '07:00',
+      close_time: '23:30',
+    });
+  };
+
+  // Restore existing hotel data if hotelId param is present, otherwise load draft
   const restoreOnboardingState = () => {
     if (hotelId) {
       const existing = hotelService.getById(hotelId);
@@ -356,7 +484,7 @@ export default function HotelOnboardingPage() {
     <div className="min-h-screen bg-stone-50 p-6 flex flex-col items-center">
       <div className="w-full max-w-4xl space-y-6">
         {/* Top Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-[#c9a84c] flex items-center justify-center text-white font-bold font-display shadow-sm">
               SN
@@ -366,9 +494,29 @@ export default function HotelOnboardingPage() {
               <p className="text-xs text-stone-500">Zero-code multi-tenant property setup & instant activation.</p>
             </div>
           </div>
-          <Button variant="ghost" size="sm" onClick={() => navigate('/super-admin')}>
-            Cancel & Exit
-          </Button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleStartBlank}
+              iconLeft={<RotateCcw className="w-3.5 h-3.5 text-stone-600" />}
+              title="Clear all prefilled defaults and enter your hotel details from scratch"
+            >
+              Start Blank
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleLoadDemoPreset}
+              iconLeft={<FileText className="w-3.5 h-3.5 text-stone-600" />}
+              title="Load sample hotel preset"
+            >
+              Load Demo Preset
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => navigate('/super-admin')}>
+              Cancel & Exit
+            </Button>
+          </div>
         </div>
 
         {/* Step Progress Bar */}
@@ -533,26 +681,191 @@ export default function HotelOnboardingPage() {
             {/* STEP 3: ROOM TYPES */}
             {currentStep === 3 && (
               <div className="space-y-4">
-                <div className="flex justify-between items-center">
-                  <h2 className="text-lg font-bold font-display text-stone-900">Step 4: Room Categories & Nightly Rates</h2>
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <div>
+                    <h2 className="text-lg font-bold font-display text-stone-900">Step 4: Room Categories & Nightly Rates</h2>
+                    <p className="text-xs text-stone-500">Edit any category name, rate, or amenities inline, or add custom room types.</p>
+                  </div>
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => setRoomTypes([...roomTypes, { name: 'Executive Suite', code: 'EXE', rate: 8500, max_adults: 2, amenities: 'AC, WiFi, Mini Bar' }])}
+                    iconLeft={<Plus className="w-4 h-4" />}
+                    onClick={() => setShowAddRoomType(!showAddRoomType)}
                   >
-                    + Add Category
+                    {showAddRoomType ? 'Close Form' : '+ Add Category'}
                   </Button>
                 </div>
-                <div className="space-y-3">
-                  {roomTypes.map((rt, idx) => (
-                    <div key={idx} className="p-3.5 rounded-xl border border-stone-200 bg-stone-50 flex justify-between items-center">
-                      <div>
-                        <div className="font-bold text-sm text-stone-900">{rt.name} ({rt.code})</div>
-                        <div className="text-xs text-stone-500">Max Adults: {rt.max_adults} · Amenities: {rt.amenities}</div>
+
+                {/* Add Category Form */}
+                {showAddRoomType && (
+                  <div className="p-4 rounded-xl border border-[#c9a84c]/40 bg-[#c9a84c]/5 space-y-3">
+                    <div className="font-bold text-xs uppercase text-[#c9a84c] tracking-wider">New Room Category</div>
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                      <div className="sm:col-span-2">
+                        <label className="text-[11px] font-bold text-stone-700 block mb-1">Category Name</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Presidential Suite"
+                          value={newRoomType.name}
+                          onChange={e => setNewRoomType({ ...newRoomType, name: e.target.value })}
+                          className="w-full text-sm bg-white border border-stone-300 rounded-lg p-2 focus:ring-1 focus:ring-[#c9a84c] outline-none"
+                        />
                       </div>
-                      <span className="font-bold text-sm text-stone-900">₹{rt.rate}/nt</span>
+                      <div>
+                        <label className="text-[11px] font-bold text-stone-700 block mb-1">Code</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. PRS"
+                          value={newRoomType.code}
+                          onChange={e => setNewRoomType({ ...newRoomType, code: e.target.value.toUpperCase() })}
+                          className="w-full text-sm font-mono uppercase bg-white border border-stone-300 rounded-lg p-2 focus:ring-1 focus:ring-[#c9a84c] outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-bold text-stone-700 block mb-1">Nightly Rate (₹)</label>
+                        <input
+                          type="number"
+                          value={newRoomType.rate}
+                          onChange={e => setNewRoomType({ ...newRoomType, rate: Number(e.target.value) })}
+                          className="w-full text-sm font-bold bg-white border border-stone-300 rounded-lg p-2 focus:ring-1 focus:ring-[#c9a84c] outline-none"
+                        />
+                      </div>
                     </div>
-                  ))}
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                      <div>
+                        <label className="text-[11px] font-bold text-stone-700 block mb-1">Max Adults</label>
+                        <input
+                          type="number"
+                          min="1"
+                          max="10"
+                          value={newRoomType.max_adults}
+                          onChange={e => setNewRoomType({ ...newRoomType, max_adults: Number(e.target.value) })}
+                          className="w-full text-sm bg-white border border-stone-300 rounded-lg p-2 focus:ring-1 focus:ring-[#c9a84c] outline-none"
+                        />
+                      </div>
+                      <div className="sm:col-span-3">
+                        <label className="text-[11px] font-bold text-stone-700 block mb-1">Amenities (comma-separated)</label>
+                        <input
+                          type="text"
+                          placeholder="AC, WiFi, Mini Bar, Safe, Bathtub"
+                          value={newRoomType.amenities}
+                          onChange={e => setNewRoomType({ ...newRoomType, amenities: e.target.value })}
+                          className="w-full text-sm bg-white border border-stone-300 rounded-lg p-2 focus:ring-1 focus:ring-[#c9a84c] outline-none"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-2 pt-2">
+                      <Button size="sm" variant="ghost" onClick={() => setShowAddRoomType(false)}>Cancel</Button>
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        onClick={() => {
+                          if (!newRoomType.name) return;
+                          const code = newRoomType.code || newRoomType.name.substring(0, 3).toUpperCase();
+                          setRoomTypes([...roomTypes, { ...newRoomType, code }]);
+                          setNewRoomType({ name: '', code: '', rate: 4500, max_adults: 2, amenities: 'AC, WiFi' });
+                          setShowAddRoomType(false);
+                        }}
+                      >
+                        Save Category
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Categories List */}
+                <div className="space-y-3">
+                  {roomTypes.length === 0 ? (
+                    <div className="text-center py-8 border-2 border-dashed border-stone-200 rounded-xl text-stone-400 text-sm">
+                      No room categories added yet. Click &quot;+ Add Category&quot; above to create one.
+                    </div>
+                  ) : (
+                    roomTypes.map((rt, idx) => (
+                      <div key={idx} className="p-4 rounded-xl border border-stone-200 bg-stone-50/70 hover:border-stone-300 transition-colors space-y-3">
+                        <div className="flex items-center justify-between gap-3 flex-wrap">
+                          <div className="flex items-center gap-2 flex-1 min-w-[200px]">
+                            <input
+                              type="text"
+                              value={rt.name}
+                              onChange={e => {
+                                const list = [...roomTypes];
+                                list[idx].name = e.target.value;
+                                setRoomTypes(list);
+                              }}
+                              className="font-bold text-base text-stone-900 bg-white border border-stone-300 rounded px-2 py-1 flex-1 outline-none focus:border-[#c9a84c]"
+                              placeholder="Category Name"
+                            />
+                            <input
+                              type="text"
+                              value={rt.code}
+                              onChange={e => {
+                                const list = [...roomTypes];
+                                list[idx].code = e.target.value.toUpperCase();
+                                setRoomTypes(list);
+                              }}
+                              className="w-16 font-mono text-xs uppercase text-center bg-white border border-stone-300 rounded px-2 py-1 outline-none focus:border-[#c9a84c]"
+                              placeholder="CODE"
+                            />
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-1 font-bold text-sm text-stone-900">
+                              <span>₹</span>
+                              <input
+                                type="number"
+                                value={rt.rate}
+                                onChange={e => {
+                                  const list = [...roomTypes];
+                                  list[idx].rate = Number(e.target.value);
+                                  setRoomTypes(list);
+                                }}
+                                className="w-24 text-right bg-white border border-stone-300 rounded px-2 py-1 font-bold outline-none focus:border-[#c9a84c]"
+                              />
+                              <span className="text-xs text-stone-500 font-normal">/nt</span>
+                            </div>
+                            <button
+                              onClick={() => setRoomTypes(roomTypes.filter((_, i) => i !== idx))}
+                              className="p-1.5 rounded-lg text-stone-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                              title="Delete Room Type"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 pt-1 border-t border-stone-200/60">
+                          <div className="flex items-center gap-2">
+                            <label className="text-[11px] font-semibold text-stone-500 whitespace-nowrap">Max Adults:</label>
+                            <input
+                              type="number"
+                              min="1"
+                              max="10"
+                              value={rt.max_adults}
+                              onChange={e => {
+                                const list = [...roomTypes];
+                                list[idx].max_adults = Number(e.target.value);
+                                setRoomTypes(list);
+                              }}
+                              className="w-14 text-center text-xs bg-white border border-stone-200 rounded px-1.5 py-0.5 outline-none focus:border-[#c9a84c]"
+                            />
+                          </div>
+                          <div className="sm:col-span-3 flex items-center gap-2">
+                            <label className="text-[11px] font-semibold text-stone-500 whitespace-nowrap">Amenities:</label>
+                            <input
+                              type="text"
+                              value={rt.amenities}
+                              onChange={e => {
+                                const list = [...roomTypes];
+                                list[idx].amenities = e.target.value;
+                                setRoomTypes(list);
+                              }}
+                              className="w-full text-xs text-stone-700 bg-white border border-stone-200 rounded px-2 py-0.5 outline-none focus:border-[#c9a84c]"
+                              placeholder="AC, WiFi, Mini Bar, Safe..."
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
             )}
@@ -560,36 +873,237 @@ export default function HotelOnboardingPage() {
             {/* STEP 4: PHYSICAL ROOMS */}
             {currentStep === 4 && (
               <div className="space-y-4">
-                <div className="flex justify-between items-center">
-                  <h2 className="text-lg font-bold font-display text-stone-900">Step 5: Physical Rooms Assignment</h2>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setRooms([...rooms, { number: `${rooms.length + 101}`, floor: 1, type_code: roomTypes[0]?.code || 'STD' }])}
-                  >
-                    + Add Room
-                  </Button>
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <div>
+                    <h2 className="text-lg font-bold font-display text-stone-900">Step 5: Physical Rooms Assignment</h2>
+                    <p className="text-xs text-stone-500">Assign room numbers, floors, and link each room to a category.</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      iconLeft={<Plus className="w-4 h-4" />}
+                      onClick={() => setShowAddRoom(!showAddRoom)}
+                    >
+                      {showAddRoom ? 'Close Form' : '+ Add Room'}
+                    </Button>
+                  </div>
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  {rooms.map((r, idx) => (
-                    <div key={idx} className="p-3 rounded-xl border border-stone-200 bg-white text-center">
-                      <div className="font-extrabold text-base text-stone-900">Room {r.number}</div>
-                      <div className="text-[11px] text-stone-500">Floor {r.floor} · {r.type_code}</div>
+
+                {/* Add Room Form */}
+                {showAddRoom && (
+                  <div className="p-4 rounded-xl border border-[#c9a84c]/40 bg-[#c9a84c]/5 space-y-3">
+                    <div className="font-bold text-xs uppercase text-[#c9a84c] tracking-wider">Add Physical Room</div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="text-[11px] font-bold text-stone-700 block mb-1">Room Number</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. 101, 201A, Villa-1"
+                          value={newRoom.number}
+                          onChange={e => setNewRoom({ ...newRoom, number: e.target.value })}
+                          className="w-full text-sm font-bold bg-white border border-stone-300 rounded-lg p-2 focus:ring-1 focus:ring-[#c9a84c] outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-bold text-stone-700 block mb-1">Floor Level</label>
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          value={newRoom.floor}
+                          onChange={e => setNewRoom({ ...newRoom, floor: Number(e.target.value) })}
+                          className="w-full text-sm bg-white border border-stone-300 rounded-lg p-2 focus:ring-1 focus:ring-[#c9a84c] outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-bold text-stone-700 block mb-1">Room Category</label>
+                        <select
+                          value={newRoom.type_code || roomTypes[0]?.code || ''}
+                          onChange={e => setNewRoom({ ...newRoom, type_code: e.target.value })}
+                          className="w-full text-sm bg-white border border-stone-300 rounded-lg p-2 focus:ring-1 focus:ring-[#c9a84c] outline-none"
+                        >
+                          {roomTypes.map(rt => (
+                            <option key={rt.code} value={rt.code}>{rt.name} ({rt.code})</option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
-                  ))}
-                </div>
+                    <div className="flex justify-end gap-2 pt-1">
+                      <Button size="sm" variant="ghost" onClick={() => setShowAddRoom(false)}>Cancel</Button>
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        onClick={() => {
+                          if (!newRoom.number) return;
+                          const typeCode = newRoom.type_code || roomTypes[0]?.code || 'STD';
+                          setRooms([...rooms, { number: newRoom.number, floor: newRoom.floor || 1, type_code: typeCode }]);
+                          setNewRoom({ number: '', floor: 1, type_code: '' });
+                          setShowAddRoom(false);
+                        }}
+                      >
+                        Add Room
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Rooms Grid */}
+                {rooms.length === 0 ? (
+                  <div className="text-center py-8 border-2 border-dashed border-stone-200 rounded-xl text-stone-400 text-sm">
+                    No physical rooms configured. Click &quot;+ Add Room&quot; above to add rooms.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    {rooms.map((r, idx) => (
+                      <div key={idx} className="p-3.5 rounded-xl border border-stone-200 bg-white hover:border-stone-300 transition-colors shadow-2xs space-y-2">
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="text-[10px] font-bold uppercase text-stone-400">Room</span>
+                          <button
+                            onClick={() => setRooms(rooms.filter((_, i) => i !== idx))}
+                            className="text-stone-300 hover:text-rose-600 transition-colors"
+                            title="Remove Room"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                        <input
+                          type="text"
+                          value={r.number}
+                          onChange={e => {
+                            const list = [...rooms];
+                            list[idx].number = e.target.value;
+                            setRooms(list);
+                          }}
+                          className="w-full text-center font-extrabold text-lg text-stone-900 bg-stone-50 border border-stone-200 rounded py-1 outline-none focus:border-[#c9a84c]"
+                        />
+                        <div className="flex items-center gap-1.5 text-xs">
+                          <span className="text-stone-500 text-[11px] font-medium">Floor</span>
+                          <input
+                            type="number"
+                            value={r.floor}
+                            onChange={e => {
+                              const list = [...rooms];
+                              list[idx].floor = Number(e.target.value);
+                              setRooms(list);
+                            }}
+                            className="w-12 text-center bg-stone-50 border border-stone-200 rounded py-0.5 outline-none focus:border-[#c9a84c]"
+                          />
+                        </div>
+                        <select
+                          value={r.type_code}
+                          onChange={e => {
+                            const list = [...rooms];
+                            list[idx].type_code = e.target.value;
+                            setRooms(list);
+                          }}
+                          className="w-full text-xs font-semibold bg-stone-50 border border-stone-200 rounded py-1 px-1.5 text-stone-700 outline-none focus:border-[#c9a84c]"
+                        >
+                          {roomTypes.map(rt => (
+                            <option key={rt.code} value={rt.code}>{rt.code} - {rt.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
             {/* STEP 5: DEPARTMENTS */}
             {currentStep === 5 && (
               <div className="space-y-4">
-                <h2 className="text-lg font-bold font-display text-stone-900">Step 6: Operational Departments</h2>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <div>
+                    <h2 className="text-lg font-bold font-display text-stone-900">Step 6: Operational Departments</h2>
+                    <p className="text-xs text-stone-500">Configure departments for ticket routing, staff assignment, and operations.</p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    iconLeft={<Plus className="w-4 h-4" />}
+                    onClick={() => setShowAddDept(!showAddDept)}
+                  >
+                    {showAddDept ? 'Close Form' : '+ Add Department'}
+                  </Button>
+                </div>
+
+                {showAddDept && (
+                  <div className="p-4 rounded-xl border border-[#c9a84c]/40 bg-[#c9a84c]/5 space-y-3">
+                    <div className="font-bold text-xs uppercase text-[#c9a84c] tracking-wider">New Department</div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="sm:col-span-2">
+                        <label className="text-[11px] font-bold text-stone-700 block mb-1">Department Name</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Concierge & Travel Desk"
+                          value={newDept.name}
+                          onChange={e => setNewDept({ ...newDept, name: e.target.value })}
+                          className="w-full text-sm bg-white border border-stone-300 rounded-lg p-2 focus:ring-1 focus:ring-[#c9a84c] outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-bold text-stone-700 block mb-1">Code</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. CNC"
+                          value={newDept.code}
+                          onChange={e => setNewDept({ ...newDept, code: e.target.value.toUpperCase() })}
+                          className="w-full text-sm font-mono uppercase bg-white border border-stone-300 rounded-lg p-2 focus:ring-1 focus:ring-[#c9a84c] outline-none"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-2 pt-1">
+                      <Button size="sm" variant="ghost" onClick={() => setShowAddDept(false)}>Cancel</Button>
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        onClick={() => {
+                          if (!newDept.name) return;
+                          const code = newDept.code || newDept.name.substring(0, 3).toUpperCase();
+                          setDepartments([...departments, { name: newDept.name, code }]);
+                          setNewDept({ name: '', code: '' });
+                          setShowAddDept(false);
+                        }}
+                      >
+                        Add Department
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {departments.map((d, idx) => (
-                    <div key={idx} className="p-3.5 rounded-xl border border-stone-200 bg-stone-50">
-                      <span className="font-mono text-xs font-bold text-stone-400 block">{d.code}</span>
-                      <span className="font-bold text-sm text-stone-900">{d.name}</span>
+                    <div key={idx} className="p-3.5 rounded-xl border border-stone-200 bg-stone-50 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 flex-1">
+                        <input
+                          type="text"
+                          value={d.code}
+                          onChange={e => {
+                            const list = [...departments];
+                            list[idx].code = e.target.value.toUpperCase();
+                            setDepartments(list);
+                          }}
+                          className="w-16 font-mono text-xs font-bold text-center bg-white border border-stone-300 rounded px-1.5 py-1 uppercase outline-none focus:border-[#c9a84c]"
+                        />
+                        <input
+                          type="text"
+                          value={d.name}
+                          onChange={e => {
+                            const list = [...departments];
+                            list[idx].name = e.target.value;
+                            setDepartments(list);
+                          }}
+                          className="font-bold text-sm text-stone-900 bg-white border border-stone-300 rounded px-2 py-1 flex-1 outline-none focus:border-[#c9a84c]"
+                        />
+                      </div>
+                      <button
+                        onClick={() => setDepartments(departments.filter((_, i) => i !== idx))}
+                        className="text-stone-400 hover:text-rose-600 p-1"
+                        title="Delete Department"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
                   ))}
                 </div>
@@ -627,12 +1141,100 @@ export default function HotelOnboardingPage() {
             {/* STEP 7: SERVICES */}
             {currentStep === 7 && (
               <div className="space-y-4">
-                <h2 className="text-lg font-bold font-display text-stone-900">Step 8: In-Room & Guest Services</h2>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <div>
+                    <h2 className="text-lg font-bold font-display text-stone-900">Step 8: In-Room & Guest Services</h2>
+                    <p className="text-xs text-stone-500">Configure standard services guests can request from the mobile portal.</p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    iconLeft={<Plus className="w-4 h-4" />}
+                    onClick={() => setShowAddService(!showAddService)}
+                  >
+                    {showAddService ? 'Close Form' : '+ Add Service'}
+                  </Button>
+                </div>
+
+                {showAddService && (
+                  <div className="p-4 rounded-xl border border-[#c9a84c]/40 bg-[#c9a84c]/5 space-y-3">
+                    <div className="font-bold text-xs uppercase text-[#c9a84c] tracking-wider">New Guest Service</div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="sm:col-span-2">
+                        <label className="text-[11px] font-bold text-stone-700 block mb-1">Service Title</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Iron & Ironing Board"
+                          value={newService.name}
+                          onChange={e => setNewService({ ...newService, name: e.target.value })}
+                          className="w-full text-sm bg-white border border-stone-300 rounded-lg p-2 focus:ring-1 focus:ring-[#c9a84c] outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-bold text-stone-700 block mb-1">Category</label>
+                        <select
+                          value={newService.category}
+                          onChange={e => setNewService({ ...newService, category: e.target.value })}
+                          className="w-full text-sm bg-white border border-stone-300 rounded-lg p-2 focus:ring-1 focus:ring-[#c9a84c] outline-none"
+                        >
+                          <option value="Housekeeping">Housekeeping</option>
+                          <option value="Transport">Transport</option>
+                          <option value="Concierge">Concierge</option>
+                          <option value="Maintenance">Maintenance</option>
+                          <option value="Dining">Dining</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-2 pt-1">
+                      <Button size="sm" variant="ghost" onClick={() => setShowAddService(false)}>Cancel</Button>
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        onClick={() => {
+                          if (!newService.name) return;
+                          setServices([...services, { ...newService }]);
+                          setNewService({ name: '', category: 'Housekeeping' });
+                          setShowAddService(false);
+                        }}
+                      >
+                        Add Service
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {services.map((s, idx) => (
-                    <div key={idx} className="p-3.5 rounded-xl border border-stone-200 bg-stone-50">
-                      <span className="text-[10px] font-bold text-[#c9a84c] uppercase block">{s.category}</span>
-                      <span className="font-bold text-sm text-stone-900">{s.name}</span>
+                    <div key={idx} className="p-3.5 rounded-xl border border-stone-200 bg-stone-50 flex items-center justify-between gap-3">
+                      <div className="space-y-1 flex-1">
+                        <input
+                          type="text"
+                          value={s.category}
+                          onChange={e => {
+                            const list = [...services];
+                            list[idx].category = e.target.value;
+                            setServices(list);
+                          }}
+                          className="text-[10px] font-bold text-[#c9a84c] uppercase bg-white border border-stone-200 rounded px-1.5 py-0.5 outline-none focus:border-[#c9a84c]"
+                        />
+                        <input
+                          type="text"
+                          value={s.name}
+                          onChange={e => {
+                            const list = [...services];
+                            list[idx].name = e.target.value;
+                            setServices(list);
+                          }}
+                          className="w-full font-bold text-sm text-stone-900 bg-white border border-stone-300 rounded px-2 py-1 outline-none focus:border-[#c9a84c]"
+                        />
+                      </div>
+                      <button
+                        onClick={() => setServices(services.filter((_, i) => i !== idx))}
+                        className="text-stone-400 hover:text-rose-600 p-1"
+                        title="Delete Service"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
                   ))}
                 </div>

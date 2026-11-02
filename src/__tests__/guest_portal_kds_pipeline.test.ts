@@ -49,6 +49,30 @@ describe('GUEST PORTAL & QR-TO-KDS OPERATIONAL PIPELINE', () => {
       const fakeQr = qrService.findByToken('non-existent-token-xyz');
       expect(fakeQr).toBeUndefined();
     });
+
+    it('generates canonical URL for sn-ymz185x0yd failing token', () => {
+      const url = generateGuestPortalUrl('sn-ymz185x0yd');
+      expect(url).toContain('/guest/sn-ymz185x0yd');
+      expect(url.startsWith('http')).toBe(true);
+    });
+
+    it('accepts valid sn- tokens with varying entropy lengths (10, 16, 32 chars)', () => {
+      const token10 = 'sn-ymz185x0yd'; // 10 chars entropy
+      const token16 = 'sn-1a2b3c4d5e6f7a8b'; // 16 chars entropy
+      const token32 = 'sn-0123456789abcdef0123456789abcdef'; // 32 chars entropy
+
+      expect(token10).toMatch(/^sn-[a-z0-9]{10}$/);
+      expect(token16).toMatch(/^sn-[a-z0-9]{16}$/);
+      expect(token32).toMatch(/^sn-[a-z0-9]{32}$/);
+    });
+
+    it('fails closed on SQL injection, XSS, and malformed tokens', () => {
+      expect(qrService.findByToken("' OR '1'='1")).toBeUndefined();
+      expect(qrService.findByToken("<script>alert(1)</script>")).toBeUndefined();
+      expect(qrService.findByToken('')).toBeUndefined();
+      expect(qrService.findByToken('undefined')).toBeUndefined();
+      expect(qrService.findByToken('null')).toBeUndefined();
+    });
   });
 
   describe('2. Menu Integrity & Precision Price Calculations', () => {

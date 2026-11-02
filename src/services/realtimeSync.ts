@@ -2,7 +2,8 @@
 // Bridges Supabase Realtime WebSockets, BroadcastChannel, and Cross-Tab Storage Events
 // Guarantees cross-device and instant synchronization between Guest Portal, KDS, Reception, and Housekeeping
 
-import { supabase, isDemoMode } from '../lib/supabase';
+import { supabase, isDemoMode, isSupabaseConfigured } from '../lib/supabase';
+import { toDbHotelId } from '../utils/tenantId';
 import type { Order, ServiceRequest, HousekeepingTask, Notification, ActivityLog, Reservation, Room, Folio, MaintenanceTicket, MenuItem, MenuCategory } from '../types';
 
 export type RealtimeEventType = 
@@ -108,7 +109,7 @@ class RealtimeSyncService {
   }
 
   public isSupabaseConnected(): boolean {
-    return this.isConnectedToSupabase && !isDemoMode() && !!supabase;
+    return this.isConnectedToSupabase && isSupabaseConfigured() && !!supabase;
   }
 
   public onConnectionChange(callback: (connected: boolean) => void): () => void {
@@ -133,7 +134,7 @@ class RealtimeSyncService {
   }
 
   private initSupabaseChannels(): void {
-    if (typeof window === 'undefined' || isDemoMode() || !supabase) {
+    if (typeof window === 'undefined' || !isSupabaseConfigured() || !supabase) {
       this.setConnectionState(false);
       return;
     }
@@ -207,7 +208,7 @@ class RealtimeSyncService {
 
   // Connect to Supabase Realtime WebSocket channel for a hotel
   public connectSupabaseHotelChannel(hotelId: string): () => void {
-    if (isDemoMode() || !supabase || !hotelId || typeof hotelId !== 'string') {
+    if (!isSupabaseConfigured() || !supabase || !hotelId || typeof hotelId !== 'string') {
       return () => {};
     }
 
@@ -215,11 +216,13 @@ class RealtimeSyncService {
       return () => this.disconnectSupabaseHotelChannel(hotelId);
     }
 
+    const dbHotelId = toDbHotelId(hotelId);
+
     try {
       const channel = supabase.channel(`hotel-realtime-${hotelId}`)
         .on(
           'postgres_changes',
-          { event: '*', schema: 'public', table: 'orders', filter: `hotel_id=eq.${hotelId}` },
+          { event: '*', schema: 'public', table: 'orders', filter: `hotel_id=eq.${dbHotelId}` },
           (payload) => {
             const rawOrder = payload.new as Order;
             if (!rawOrder) return;
@@ -242,7 +245,7 @@ class RealtimeSyncService {
         )
         .on(
           'postgres_changes',
-          { event: '*', schema: 'public', table: 'service_requests', filter: `hotel_id=eq.${hotelId}` },
+          { event: '*', schema: 'public', table: 'service_requests', filter: `hotel_id=eq.${dbHotelId}` },
           (payload) => {
             const rawReq = payload.new as ServiceRequest;
             if (!rawReq) return;
@@ -260,7 +263,7 @@ class RealtimeSyncService {
         )
         .on(
           'postgres_changes',
-          { event: '*', schema: 'public', table: 'housekeeping_tasks', filter: `hotel_id=eq.${hotelId}` },
+          { event: '*', schema: 'public', table: 'housekeeping_tasks', filter: `hotel_id=eq.${dbHotelId}` },
           (payload) => {
             if (payload.eventType === 'INSERT') {
               this.emit('NEW_HOUSEKEEPING_TASK', { task: payload.new as HousekeepingTask });
@@ -274,7 +277,7 @@ class RealtimeSyncService {
         )
         .on(
           'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'notifications', filter: `hotel_id=eq.${hotelId}` },
+          { event: 'INSERT', schema: 'public', table: 'notifications', filter: `hotel_id=eq.${dbHotelId}` },
           (payload) => {
             this.emit('NEW_NOTIFICATION', { notification: payload.new as Notification });
           }
@@ -282,7 +285,7 @@ class RealtimeSyncService {
         .subscribe((status) => {
           if (status === 'SUBSCRIBED') {
             this.setConnectionState(true);
-            console.info(`[StayNexa Realtime] Subscribed to live WebSocket updates for hotel: ${hotelId}`);
+            console.info(`[StayNexa Realtime] Subscribed to live WebSocket updates for hotel: ${hotelId} (UUID: ${dbHotelId})`);
           }
         });
 

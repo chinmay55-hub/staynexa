@@ -7,7 +7,7 @@ import type {
   Reservation, Folio, FolioItem, Payment, Order,
   MenuCategory, MenuItem, HotelService, ServiceRequest,
   HousekeepingTask, MaintenanceTicket, Department,
-  Profile, Notification, QRCode, ActivityLog, Subscription, HotelMembership
+  Profile, Notification, QRCode, ActivityLog, Subscription, HotelMembership, UserRole
 } from '../types';
 
 import {
@@ -1560,6 +1560,32 @@ export const staffService = {
     saveDemoStore();
     return membership;
   },
+  updateMembership: (userId: string, hotelId: string, role?: UserRole): HotelMembership => {
+    const idx = memberships.findIndex(m => m.user_id === userId);
+    if (idx !== -1) {
+      memberships[idx] = {
+        ...memberships[idx],
+        hotel_id: hotelId,
+        ...(role ? { role } : {}),
+      };
+      saveDemoStore();
+      return memberships[idx];
+    } else {
+      return staffService.createMembership({
+        hotel_id: hotelId,
+        user_id: userId,
+        role: role || 'RECEPTION',
+        is_active: true,
+      });
+    }
+  },
+  deleteMembership: (userId: string): void => {
+    const idx = memberships.findIndex(m => m.user_id === userId);
+    if (idx !== -1) {
+      memberships.splice(idx, 1);
+      saveDemoStore();
+    }
+  },
   createDepartment: (data: Omit<Department, 'id'>): Department => {
     const dept: Department = {
       ...data,
@@ -1642,17 +1668,21 @@ export const qrService = {
     return qr;
   },
   generateAsync: async (hotelId: string, roomId?: string, customToken?: string): Promise<QRCode> => {
-    if (!isDemoMode() && isSupabaseConfigured() && supabase) {
-      const created = await supabaseQrService.generate(hotelId, roomId, customToken);
-      const enriched: QRCode = {
-        ...created,
-        room: rooms.find(r => r.id === created.room_id),
-      };
-      const idx = qrCodes.findIndex(q => q.id === created.id);
-      if (idx !== -1) qrCodes[idx] = enriched;
-      else qrCodes.push(enriched);
-      saveDemoStore();
-      return enriched;
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const created = await supabaseQrService.generate(hotelId, roomId, customToken);
+        const enriched: QRCode = {
+          ...created,
+          room: rooms.find(r => r.id === created.room_id),
+        };
+        const idx = qrCodes.findIndex(q => q.id === created.id);
+        if (idx !== -1) qrCodes[idx] = enriched;
+        else qrCodes.push(enriched);
+        saveDemoStore();
+        return enriched;
+      } catch (err) {
+        console.warn('[qrService.generateAsync] Supabase QR write error, falling back to local demo store:', err);
+      }
     }
     return qrService.generate(hotelId, roomId);
   },

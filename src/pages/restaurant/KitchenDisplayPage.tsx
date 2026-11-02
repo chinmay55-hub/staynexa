@@ -14,13 +14,15 @@ import {
   Volume2,
   VolumeX,
   Printer,
-  X
+  X,
+  Check
 } from 'lucide-react';
 import { useAuth } from '../../contexts/useAuth';
 import { orderService, hotelService, reloadDemoStoreFromStorage } from '../../services/demoDataService';
 import { audioService } from '../../services/audioService';
 import { realtimeSync } from '../../services/realtimeSync';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
+import { toDbHotelId, isSameHotel, isUuid } from '../../utils/tenantId';
 import type { Order, OrderStatus } from '../../types';
 import { Button } from '../../components/ui';
 
@@ -32,7 +34,7 @@ export default function KitchenDisplayPage() {
   const hotelId = user?.hotel_id || 'hotel-001';
   const hotel = hotelService.getById(hotelId);
 
-  const [orders, setOrders] = useState<Order[]>(() => orderService.getAll(hotelId));
+  const [orders, setOrders] = useState<Order[]>(() => orderService.getActive(hotelId));
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const [liveAlertBanner, setLiveAlertBanner] = useState<{ id: string; message: string } | null>(null);
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(() => realtimeSync.isSupabaseConnected());
@@ -61,22 +63,28 @@ export default function KitchenDisplayPage() {
 
   const refreshOrders = () => {
     reloadDemoStoreFromStorage();
-    setOrders([...orderService.getAll(hotelId)]);
+    setOrders([...orderService.getActive(hotelId)]);
+  };
+
+  const handleClearCompleted = () => {
+    orderService.clearCompleted(hotelId);
+    fetchDirectKdsOrders().then(fresh => setOrders(fresh));
   };
 
   // Direct database fetch helper
   const fetchDirectKdsOrders = useCallback(async (): Promise<Order[]> => {
     reloadDemoStoreFromStorage();
-    let baseOrders = orderService.getAll(hotelId);
+    let baseOrders = orderService.getActive(hotelId);
 
     if (isSupabaseConfigured() && supabase) {
       try {
-        // Direct query to Supabase orders table: status != 'completed'
+        const dbHotelId = toDbHotelId(hotelId);
+        // Direct query to Supabase orders table: status not in DELIVERED, CANCELLED
         const { data: dbOrders, error: dbErr } = await supabase
           .from('orders')
           .select('*, items:order_items(*), room:rooms(*), guest:guests(*)')
-          .eq('hotel_id', hotelId)
-          .neq('status', 'completed')
+          .eq('hotel_id', dbHotelId)
+          .not('status', 'in', '("DELIVERED","CANCELLED","completed")')
           .order('created_at', { ascending: false });
 
         if (!dbErr && dbOrders && dbOrders.length > 0) {
@@ -92,8 +100,8 @@ export default function KitchenDisplayPage() {
         const { data: simpleDbOrders, error: simpleErr } = await supabase
           .from('orders')
           .select('*')
-          .eq('hotel_id', hotelId)
-          .neq('status', 'completed')
+          .eq('hotel_id', dbHotelId)
+          .not('status', 'in', '("DELIVERED","CANCELLED","completed")')
           .order('created_at', { ascending: false });
 
         if (!simpleErr && simpleDbOrders && simpleDbOrders.length > 0) {
@@ -130,6 +138,7 @@ export default function KitchenDisplayPage() {
     // Direct Postgres Realtime Subscription for public.orders
     let ordersSubscription: any = null;
     if (isSupabaseConfigured() && supabase) {
+      const dbHotelId = toDbHotelId(hotelId);
       ordersSubscription = supabase
         .channel(`kds-public-orders-${hotelId}`)
         .on(
@@ -138,13 +147,13 @@ export default function KitchenDisplayPage() {
             event: '*',
             schema: 'public',
             table: 'orders',
-            filter: `hotel_id=eq.${hotelId}`,
+            filter: `hotel_id=eq.${dbHotelId}`,
           },
           (payload) => {
             console.log('[KDS Realtime postgres_changes]', payload.eventType, payload.new);
             if (payload.eventType === 'INSERT' && payload.new) {
               const raw = payload.new as any;
-              if (raw.hotel_id === hotelId) {
+              if (isSameHotel(raw.hotel_id, hotelId)) {
                 // Fetch full order with items immediately to populate order items in realtime
                 fetchDirectKdsOrders().then(fresh => {
                   if (fresh && fresh.length > 0) {
@@ -161,13 +170,18 @@ export default function KitchenDisplayPage() {
               }
             } else if (payload.eventType === 'UPDATE' && payload.new) {
               const raw = payload.new as any;
-              if (raw.hotel_id === hotelId) {
-                setOrders(prev => prev.map(o => (o.id === raw.id ? { 
-                  ...o, 
-                  ...raw, 
-                  status: (raw.status || o.status).toUpperCase() as OrderStatus,
-                  items: (raw.items && Array.isArray(raw.items) && raw.items.length > 0) ? raw.items : o.items,
-                } : o)));
+              if (isSameHotel(raw.hotel_id, hotelId)) {
+                const upStatus = (raw.status || '').toUpperCase();
+                if (upStatus === 'DELIVERED' || upStatus === 'CANCELLED') {
+                  setOrders(prev => prev.filter(o => o.id !== raw.id));
+                } else {
+                  setOrders(prev => prev.map(o => (o.id === raw.id ? { 
+                    ...o, 
+                    ...raw, 
+                    status: upStatus as OrderStatus,
+                    items: (raw.items && Array.isArray(raw.items) && raw.items.length > 0) ? raw.items : o.items,
+                  } : o)));
+                }
               }
             } else if (payload.eventType === 'DELETE' && payload.old) {
               const oldId = (payload.old as any).id;
@@ -184,7 +198,7 @@ export default function KitchenDisplayPage() {
 
     // Local / In-process BroadcastChannel Subscription
     const unsubNewOrder = realtimeSync.subscribe('NEW_ORDER', ({ order }) => {
-      if (order.hotel_id === hotelId) {
+      if (isSameHotel(order.hotel_id, hotelId)) {
         setOrders(prev => {
           if (prev.some(o => o.id === order.id)) return prev;
           return [order, ...prev];
@@ -200,9 +214,14 @@ export default function KitchenDisplayPage() {
     });
 
     const unsubOrderStatus = realtimeSync.subscribe('ORDER_STATUS_CHANGED', ({ orderId, status, order }) => {
-      setOrders(prev =>
-        prev.map(o => (o.id === orderId ? { ...o, ...order, status: status.toUpperCase() as OrderStatus } : o))
-      );
+      const upStatus = status.toUpperCase();
+      if (upStatus === 'DELIVERED' || upStatus === 'CANCELLED') {
+        setOrders(prev => prev.filter(o => o.id !== orderId));
+      } else {
+        setOrders(prev =>
+          prev.map(o => (o.id === orderId ? { ...o, ...order, status: upStatus as OrderStatus } : o))
+        );
+      }
     });
 
     return () => {
@@ -272,7 +291,11 @@ export default function KitchenDisplayPage() {
 
     try {
       await orderService.updateStatusAsync(orderId, nextStatus);
-      setOrders(prev => prev.map(o => (o.id === orderId ? { ...o, status: nextStatus } : o)));
+      if (nextStatus === 'DELIVERED' || nextStatus === 'CANCELLED') {
+        setOrders(prev => prev.filter(o => o.id !== orderId));
+      } else {
+        setOrders(prev => prev.map(o => (o.id === orderId ? { ...o, status: nextStatus } : o)));
+      }
     } catch (err: any) {
       console.error('KDS status transition failed:', err);
       const errorMsg = err?.message || 'Database write rejected status update';
@@ -437,6 +460,15 @@ export default function KitchenDisplayPage() {
           <div className="text-xs font-bold text-[#c9a84c] bg-[#c9a84c]/10 border border-[#c9a84c]/30 px-3 py-1.5 rounded-lg">
             {newOrders.length + acceptedOrders.length + preparingOrders.length} Active Tickets
           </div>
+
+          <button
+            onClick={handleClearCompleted}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-rose-500/20 text-white/70 hover:text-rose-200 border border-white/10 hover:border-rose-500/30 text-xs transition-colors"
+            title="Clear Delivered / Completed Orders"
+          >
+            <Check className="w-3.5 h-3.5" />
+            <span className="hidden md:inline">Clear Delivered</span>
+          </button>
 
           <button
             onClick={refreshOrders}

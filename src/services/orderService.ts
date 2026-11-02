@@ -3,6 +3,7 @@
 
 import { supabase, isSupabaseConfigured, isDemoMode } from '../lib/supabase';
 import { realtimeSync } from './realtimeSync';
+import { isUuid } from '../utils/tenantId';
 import type { Order, OrderItem, OrderStatus } from '../types';
 
 function generateId(): string {
@@ -67,6 +68,26 @@ export const orderService = {
   getActive: (hotelId: string): Order[] => {
     if (storeAdapter) return storeAdapter.getActive(hotelId);
     return fallbackOrders.filter(o => o.hotel_id === hotelId && !['DELIVERED', 'CANCELLED', 'completed'].includes(o.status));
+  },
+
+  removeOrder: (id: string): void => {
+    if (storeAdapter?.removeLocal) {
+      storeAdapter.removeLocal(id);
+    } else {
+      const idx = fallbackOrders.findIndex(o => o.id === id);
+      if (idx !== -1) fallbackOrders.splice(idx, 1);
+    }
+  },
+
+  clearCompleted: (hotelId: string): void => {
+    const all = orderService.getAll(hotelId);
+    all.forEach(o => {
+      if (o.status === 'DELIVERED' || o.status === 'CANCELLED') {
+        if (storeAdapter?.removeLocal) {
+          storeAdapter.removeLocal(o.id);
+        }
+      }
+    });
   },
 
   create: (data: Omit<Order, 'id' | 'created_at' | 'updated_at' | 'items'> & { 
@@ -291,6 +312,9 @@ export const orderService = {
             .eq('id', id);
           if (updateErr) throw updateErr;
         } catch (err: any) {
+          if (err?.code === '22P02' || (typeof err?.message === 'string' && err.message.includes('invalid input syntax for type uuid'))) {
+            return;
+          }
           console.error('[orderService.updateStatus] Supabase error:', err);
           // SEC-01: Revert optimistic state back to previousStatus
           if (previousStatus && storeAdapter) {
@@ -364,6 +388,9 @@ export const orderService = {
     }
 
     if (updateErr) {
+      if (updateErr.code === '22P02' || (typeof updateErr.message === 'string' && updateErr.message.includes('invalid input syntax for type uuid'))) {
+        return orderService.updateStatus(id, status);
+      }
       throw new Error(`Failed to update order status in database: ${updateErr?.message || updateErr}`);
     }
 
