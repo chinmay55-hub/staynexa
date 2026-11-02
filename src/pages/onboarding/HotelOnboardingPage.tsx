@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { 
   CheckCircle2, 
@@ -113,8 +113,7 @@ export default function HotelOnboardingPage() {
   const [autoGenerateQrs, setAutoGenerateQrs] = useState(true);
   const [activatedHotelId, setActivatedHotelId] = useState<string | null>(null);
 
-  // Restore existing hotel data if hotelId param is present, otherwise load draft
-  useEffect(() => {
+  const restoreOnboardingState = () => {
     if (hotelId) {
       const existing = hotelService.getById(hotelId);
       if (existing) {
@@ -192,7 +191,14 @@ export default function HotelOnboardingPage() {
         if (parsed.config) setConfig(parsed.config);
       }
     } catch {}
-  }, [hotelId]);
+  };
+
+  const restoreKey = hotelId ?? '';
+  const [appliedRestoreKey, setAppliedRestoreKey] = useState<string | null>(null);
+  if (appliedRestoreKey !== restoreKey) {
+    setAppliedRestoreKey(restoreKey);
+    restoreOnboardingState();
+  }
 
   const saveDraft = () => {
     try {

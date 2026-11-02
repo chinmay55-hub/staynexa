@@ -79,13 +79,6 @@ export default function RoomsManagementPage() {
     housekeeping_status: 'CLEAN' as HousekeepingStatus,
   });
 
-  // Ensure new room form always has a valid category selected
-  useEffect(() => {
-    if (roomTypes.length > 0 && !newRoomForm.room_type_id) {
-      setNewRoomForm(prev => ({ ...prev, room_type_id: roomTypes[0].id }));
-    }
-  }, [roomTypes, newRoomForm.room_type_id]);
-
   // Add Room Type Modal
   const [isAddTypeOpen, setIsAddTypeOpen] = useState(false);
   const [newTypeForm, setNewTypeForm] = useState({
@@ -503,7 +496,7 @@ export default function RoomsManagementPage() {
           </div>
           <Select
             label="Room Category"
-            value={newRoomForm.room_type_id}
+            value={newRoomForm.room_type_id || roomTypes[0]?.id || ''}
             onChange={e => setNewRoomForm({ ...newRoomForm, room_type_id: e.target.value })}
             disabled={isSubmittingRoom}
             options={roomTypes.map(rt => ({ value: rt.id, label: `${rt.name} (${rt.code})` }))}

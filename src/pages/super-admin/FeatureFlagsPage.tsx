@@ -25,26 +25,25 @@ const DEFAULT_FLAGS: FeatureFlagItem[] = [
   { key: 'ai_concierge', name: 'AI Guest Concierge Agent', description: 'Automated conversational recommendations and concierge answers (Beta)', category: 'AI', enabled: false },
 ];
 
+function buildFlagsForScope(scope: string): FeatureFlagItem[] {
+  const scopeMap = featureFlagService.getFlagsForScope(scope);
+  return DEFAULT_FLAGS.map(f => ({
+    ...f,
+    enabled: scopeMap[f.key] !== undefined ? scopeMap[f.key] : f.enabled,
+  }));
+}
+
 export default function FeatureFlagsPage() {
   const [selectedHotel, setSelectedHotel] = useState<string>('GLOBAL');
   const [hotels] = useState(() => hotelService.getAll());
   const [saveFeedback, setSaveFeedback] = useState(false);
-  const [flags, setFlags] = useState<FeatureFlagItem[]>(() => {
-    const scopeMap = featureFlagService.getFlagsForScope('GLOBAL');
-    return DEFAULT_FLAGS.map(f => ({
-      ...f,
-      enabled: scopeMap[f.key] !== undefined ? scopeMap[f.key] : f.enabled,
-    }));
-  });
+  const [flags, setFlags] = useState<FeatureFlagItem[]>(() => buildFlagsForScope('GLOBAL'));
 
-  // Reload when scope changes
-  React.useEffect(() => {
-    const scopeMap = featureFlagService.getFlagsForScope(selectedHotel);
-    setFlags(DEFAULT_FLAGS.map(f => ({
-      ...f,
-      enabled: scopeMap[f.key] !== undefined ? scopeMap[f.key] : f.enabled,
-    })));
-  }, [selectedHotel]);
+  const [loadedScope, setLoadedScope] = useState(selectedHotel);
+  if (selectedHotel !== loadedScope) {
+    setLoadedScope(selectedHotel);
+    setFlags(buildFlagsForScope(selectedHotel));
+  }
 
   const toggleFlag = (key: string) => {
     setFlags(prev => prev.map(f => {

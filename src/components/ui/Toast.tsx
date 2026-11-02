@@ -1,11 +1,4 @@
-import React, {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useRef,
-  useState,
-} from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { CheckCircle2, XCircle, AlertTriangle, Info, X } from 'lucide-react';
 
@@ -21,36 +14,7 @@ export interface Toast {
   duration?: number; // ms, 0 = persistent
 }
 
-export interface ToastContextValue {
-  toasts: Toast[];
-  addToast: (toast: Omit<Toast, 'id'>) => string;
-  removeToast: (id: string) => void;
-  success: (title: string, message?: string) => void;
-  error: (title: string, message?: string) => void;
-  warning: (title: string, message?: string) => void;
-  info: (title: string, message?: string) => void;
-}
-
-// ─── Context ───────────────────────────────────────────────────────────────────
-
-const ToastContext = createContext<ToastContextValue | null>(null);
-
-// ─── useToast ──────────────────────────────────────────────────────────────────
-
-const NOOP_TOAST: ToastContextValue = {
-  toasts: [],
-  addToast: () => '',
-  removeToast: () => {},
-  success: () => {},
-  error: () => {},
-  warning: () => {},
-  info: () => {},
-};
-
-export function useToast(): ToastContextValue {
-  const ctx = useContext(ToastContext);
-  return ctx || NOOP_TOAST;
-}
+import { ToastContext } from './useToast';
 
 // ─── ToastProvider ─────────────────────────────────────────────────────────────
 

@@ -7,6 +7,7 @@ import {
   Receipt
 } from 'lucide-react';
 import { useAuth } from '../../contexts/useAuth';
+import { nowIso } from '../../utils/clock';
 import { 
   folioService, 
   reservationService, 
@@ -121,8 +122,8 @@ export default function FoliosPage() {
         total_charges: res.total_amount,
         total_payments: res.deposit_amount || 0,
         outstanding: res.total_amount - (res.deposit_amount || 0),
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        created_at: nowIso(),
+        updated_at: nowIso(),
       };
     }
     setSelectedFolio(folio);

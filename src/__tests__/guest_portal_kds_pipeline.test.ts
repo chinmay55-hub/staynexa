@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { pinDemoMode } from './demoModePin';
 import { 
   qrService, 
   hotelService, 
@@ -13,6 +14,13 @@ import { generateGuestPortalUrl } from '../utils/qrCode';
 import { paymentService } from '../services/paymentService';
 
 describe('GUEST PORTAL & QR-TO-KDS OPERATIONAL PIPELINE', () => {
+  let unpinDemoMode: () => void;
+  beforeEach(() => {
+    unpinDemoMode = pinDemoMode();
+  });
+  afterEach(() => {
+    unpinDemoMode();
+  });
   beforeEach(() => {
     resetDemoStore();
   });

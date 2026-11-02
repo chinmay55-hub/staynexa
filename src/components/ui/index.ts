@@ -44,13 +44,15 @@ export type {
 } from './Badge';
 
 // ─── Modal ─────────────────────────────────────────────────────────────────────
-export { Modal, ConfirmModal, useModal } from './Modal';
-export type { ModalProps, ConfirmModalProps, ModalSize, UseModalReturn } from './Modal';
+export { Modal, ConfirmModal } from './Modal';
+export type { ModalProps, ConfirmModalProps, ModalSize } from './Modal';
 
 // ─── Table ─────────────────────────────────────────────────────────────────────
 export { Table } from './Table';
 export type { TableProps, ColumnDef } from './Table';
 
 // ─── Toast ─────────────────────────────────────────────────────────────────────
-export { ToastProvider, useToast } from './Toast';
-export type { Toast, ToastVariant, ToastContextValue } from './Toast';
+export { ToastProvider } from './Toast';
+export { useToast } from './useToast';
+export type { Toast, ToastVariant } from './Toast';
+export type { ToastContextValue } from './useToast';

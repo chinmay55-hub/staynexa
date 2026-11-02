@@ -1,5 +1,5 @@
 // GlobalSearch – modal-based search across guests, rooms, reservations
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useDeferredValue } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, X, User, DoorOpen, CalendarDays, Loader2 } from 'lucide-react';
 import clsx from 'clsx';
@@ -57,21 +57,23 @@ export function GlobalSearch({ open, onClose }: GlobalSearchProps) {
   const navigate = useNavigate();
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<SearchResult[]>([]);
-  const [loading, setLoading] = useState(false);
   const [selectedIdx, setSelectedIdx] = useState(0);
 
   const hotelId = user?.hotel_id;
   const basePath = getBasePath(user?.role ?? '');
 
-  // Auto-focus when opened
-  useEffect(() => {
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
     if (open) {
-      setTimeout(() => inputRef.current?.focus(), 50);
       setQuery('');
-      setResults([]);
       setSelectedIdx(0);
     }
+  }
+
+  // Auto-focus when opened
+  useEffect(() => {
+    if (open) setTimeout(() => inputRef.current?.focus(), 50);
   }, [open]);
 
   // Close on Escape
@@ -87,80 +89,61 @@ export function GlobalSearch({ open, onClose }: GlobalSearchProps) {
     return () => document.removeEventListener('keydown', handleKey);
   }, [open, onClose]);
 
-  // Search logic with debounce
-  const runSearch = useCallback((q: string) => {
-    if (!hotelId || q.trim().length < 2) {
-      setResults([]);
-      setLoading(false);
-      return;
-    }
+  const deferredQuery = useDeferredValue(query);
+  const loading = query !== deferredQuery;
 
-    setLoading(true);
+  const results = useMemo<SearchResult[]>(() => {
+    const q = deferredQuery;
+    if (!hotelId || q.trim().length < 2) return [];
+    const out: SearchResult[] = [];
 
-    // Simulate tiny async delay for UX polish
-    const timer = setTimeout(() => {
-      const out: SearchResult[] = [];
-
-      // Guests
-      const guestHits: Guest[] = guestService.search(hotelId, q).slice(0, 4);
-      guestHits.forEach(g => {
-        out.push({
-          id: g.id,
-          category: 'guest',
-          primary: `${g.first_name} ${g.last_name}`,
-          secondary: [g.phone, g.email].filter(Boolean).join(' · '),
-          path: `${basePath}/guests/${g.id}`,
-        });
+    const guestHits: Guest[] = guestService.search(hotelId, q).slice(0, 4);
+    guestHits.forEach(g => {
+      out.push({
+        id: g.id,
+        category: 'guest',
+        primary: `${g.first_name} ${g.last_name}`,
+        secondary: [g.phone, g.email].filter(Boolean).join(' · '),
+        path: `${basePath}/guests/${g.id}`,
       });
+    });
 
-      // Reservations
-      const resHits: Reservation[] = reservationService.getAll(hotelId)
-        .filter(r =>
-          r.id.toLowerCase().includes(q.toLowerCase()) ||
-          (r.guest && `${r.guest.first_name} ${r.guest.last_name}`.toLowerCase().includes(q.toLowerCase())) ||
-          (r.room && r.room.number.toLowerCase().includes(q.toLowerCase())) ||
-          (r.external_booking_id ?? '').toLowerCase().includes(q.toLowerCase())
-        )
-        .slice(0, 4);
-      resHits.forEach(r => {
-        out.push({
-          id: r.id,
-          category: 'reservation',
-          primary: r.guest ? `${r.guest.first_name} ${r.guest.last_name}` : r.id,
-          secondary: `${r.check_in_date} → ${r.check_out_date} · ${r.status}`,
-          path: `${basePath}/reservations/${r.id}`,
-        });
+    const resHits: Reservation[] = reservationService.getAll(hotelId)
+      .filter(r =>
+        r.id.toLowerCase().includes(q.toLowerCase()) ||
+        (r.guest && `${r.guest.first_name} ${r.guest.last_name}`.toLowerCase().includes(q.toLowerCase())) ||
+        (r.room && r.room.number.toLowerCase().includes(q.toLowerCase())) ||
+        (r.external_booking_id ?? '').toLowerCase().includes(q.toLowerCase())
+      )
+      .slice(0, 4);
+    resHits.forEach(r => {
+      out.push({
+        id: r.id,
+        category: 'reservation',
+        primary: r.guest ? `${r.guest.first_name} ${r.guest.last_name}` : r.id,
+        secondary: `${r.check_in_date} → ${r.check_out_date} · ${r.status}`,
+        path: `${basePath}/reservations/${r.id}`,
       });
+    });
 
-      // Rooms
-      const roomHits: Room[] = roomService.getAll(hotelId)
-        .filter(r =>
-          r.number.toLowerCase().includes(q.toLowerCase()) ||
-          (r.room_type?.name ?? '').toLowerCase().includes(q.toLowerCase())
-        )
-        .slice(0, 4);
-      roomHits.forEach(r => {
-        out.push({
-          id: r.id,
-          category: 'room',
-          primary: `Room ${r.number}`,
-          secondary: `${r.room_type?.name ?? ''} · Floor ${r.floor} · ${r.status}`,
-          path: `${basePath}/rooms/${r.id}`,
-        });
+    const roomHits: Room[] = roomService.getAll(hotelId)
+      .filter(r =>
+        r.number.toLowerCase().includes(q.toLowerCase()) ||
+        (r.room_type?.name ?? '').toLowerCase().includes(q.toLowerCase())
+      )
+      .slice(0, 4);
+    roomHits.forEach(r => {
+      out.push({
+        id: r.id,
+        category: 'room',
+        primary: `Room ${r.number}`,
+        secondary: `${r.room_type?.name ?? ''} · Floor ${r.floor} · ${r.status}`,
+        path: `${basePath}/rooms/${r.id}`,
       });
+    });
 
-      setResults(out);
-      setSelectedIdx(0);
-      setLoading(false);
-    }, 200);
-
-    return () => clearTimeout(timer);
-  }, [hotelId, basePath]);
-
-  useEffect(() => {
-    const cleanup = runSearch(query);
-    return cleanup;
-  }, [query, runSearch]);
+    return out;
+  }, [hotelId, basePath, deferredQuery]);
 
   // Keyboard navigation
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -212,13 +195,13 @@ export function GlobalSearch({ open, onClose }: GlobalSearchProps) {
             type="text"
             placeholder="Search guests, rooms, reservations…"
             value={query}
-            onChange={e => setQuery(e.target.value)}
+            onChange={e => { setQuery(e.target.value); setSelectedIdx(0); }}
             onKeyDown={handleKeyDown}
             className="flex-1 text-sm text-[#242220] placeholder-stone-400 bg-transparent outline-none"
           />
           {query && (
             <button
-              onClick={() => { setQuery(''); setResults([]); inputRef.current?.focus(); }}
+              onClick={() => { setQuery(''); inputRef.current?.focus(); }}
               className="p-1 rounded text-stone-400 hover:text-[#242220] transition-colors"
             >
               <X size={15} />

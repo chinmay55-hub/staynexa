@@ -4,7 +4,7 @@ import type { UserRole, Profile } from '../types';
 import { DEMO_PROFILES, DEMO_MEMBERSHIPS } from '../data/demo';
 import { supabase, isDemoMode } from '../lib/supabase';
 import { demoDataService, staffService, hotelService } from '../services/demoDataService';
-import { AuthContext, type AuthContextType } from './useAuth';
+import { AuthContext } from './useAuth';
 
 export interface AuthUser {
   id: string;

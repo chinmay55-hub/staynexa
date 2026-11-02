@@ -1,23 +1,6 @@
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 import clsx from 'clsx';
 import { X } from 'lucide-react';
-
-// ─── useModal hook ─────────────────────────────────────────────────────────────
-
-export interface UseModalReturn {
-  isOpen: boolean;
-  open: () => void;
-  close: () => void;
-  toggle: () => void;
-}
-
-export function useModal(initialOpen = false): UseModalReturn {
-  const [isOpen, setIsOpen] = React.useState(initialOpen);
-  const open = useCallback(() => setIsOpen(true), []);
-  const close = useCallback(() => setIsOpen(false), []);
-  const toggle = useCallback(() => setIsOpen((v) => !v), []);
-  return { isOpen, open, close, toggle };
-}
 
 // ─── Modal sizes ───────────────────────────────────────────────────────────────
 

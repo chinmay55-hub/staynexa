@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { pinDemoMode } from './demoModePin';
 import {
   hotelService,
   roomService,
@@ -20,6 +21,13 @@ import {
 import { DEMO_PROFILES, DEMO_MEMBERSHIPS } from '../data/demo';
 
 describe('STAYNEXA END-TO-END DEMO WORKFLOW SUITE', () => {
+  let unpinDemoMode: () => void;
+  beforeEach(() => {
+    unpinDemoMode = pinDemoMode();
+  });
+  afterEach(() => {
+    unpinDemoMode();
+  });
   beforeEach(() => {
     if (typeof window === 'undefined') {
       const store: Record<string, string> = {};

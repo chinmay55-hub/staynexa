@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { pinDemoMode } from './demoModePin';
 import { 
   hotelService, 
   roomService, 
@@ -695,6 +696,14 @@ describe('STAYNEXA CORE HOTEL OPERATING SYSTEM TEST SUITE', () => {
 
   // ─── 14. REAL-TIME KDS SYNC & GUEST ORDER PIPELINE HARDENING ─────────────
   describe('Real-Time KDS Sync & Guest Order Pipeline Hardening', () => {
+    let unpinDemoMode: () => void;
+    beforeEach(() => {
+      unpinDemoMode = pinDemoMode();
+    });
+    afterEach(() => {
+      unpinDemoMode();
+    });
+
     it('should automatically attach in-room order to active checked-in room folio', () => {
       // Create order with charge_to_room: true
       const order = orderService.create({

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   ChefHat, 
@@ -65,7 +65,7 @@ export default function KitchenDisplayPage() {
   };
 
   // Direct database fetch helper
-  const fetchDirectKdsOrders = async (): Promise<Order[]> => {
+  const fetchDirectKdsOrders = useCallback(async (): Promise<Order[]> => {
     reloadDemoStoreFromStorage();
     let baseOrders = orderService.getAll(hotelId);
 
@@ -110,7 +110,7 @@ export default function KitchenDisplayPage() {
     }
 
     return baseOrders;
-  };
+  }, [hotelId]);
 
   // 1. Direct KDS Database Query on Mount (status != 'completed')
   useEffect(() => {
@@ -121,7 +121,7 @@ export default function KitchenDisplayPage() {
       }
     });
     return () => { isMounted = false; };
-  }, [hotelId]);
+  }, [hotelId, fetchDirectKdsOrders]);
 
   // 2. Realtime WebSocket Listeners (Supabase Postgres Changes on schema: 'public', table: 'orders')
   useEffect(() => {
@@ -213,7 +213,7 @@ export default function KitchenDisplayPage() {
       unsubNewOrder();
       unsubOrderStatus();
     };
-  }, [hotelId]);
+  }, [hotelId, fetchDirectKdsOrders]);
 
   // 3. Infallible Background Interval: Strict 3-Second Database Auto-Polling
   useEffect(() => {
@@ -253,7 +253,7 @@ export default function KitchenDisplayPage() {
     }, 3000);
 
     return () => clearInterval(pollInterval);
-  }, [hotelId]);
+  }, [hotelId, fetchDirectKdsOrders]);
 
   // Auto-dismiss live alert banner after 8 seconds
   useEffect(() => {

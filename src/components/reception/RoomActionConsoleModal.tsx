@@ -170,18 +170,21 @@ export function RoomActionConsoleModal({
   }, [hotelId]);
 
   // Sync state when room opens or changes
-  useEffect(() => {
-    if (!room) return;
-    setCurrentRoom(room);
-    setActiveTab('overview');
-    setCheckoutSuccess(false);
-    setResSuccessMessage(null);
-    setServiceSuccessMsg(null);
-    setRatePerNight(room.room_type?.base_rate || 3500);
-
-    // Fetch active checked-in reservation for this room
-    refreshRoomData(room.id);
-  }, [room, hotelId, refreshRoomData]);
+  const [syncedRoom, setSyncedRoom] = useState<Room | null | undefined>(undefined);
+  const [syncedHotelId, setSyncedHotelId] = useState<string | undefined>(undefined);
+  if (room !== syncedRoom || hotelId !== syncedHotelId) {
+    setSyncedRoom(room);
+    setSyncedHotelId(hotelId);
+    if (room) {
+      setCurrentRoom(room);
+      setActiveTab('overview');
+      setCheckoutSuccess(false);
+      setResSuccessMessage(null);
+      setServiceSuccessMsg(null);
+      setRatePerNight(room.room_type?.base_rate || 3500);
+      refreshRoomData(room.id);
+    }
+  }
 
   // Realtime synchronization for Folio and Order charges while modal is open
   useEffect(() => {

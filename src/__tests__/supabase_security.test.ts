@@ -1,4 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { pinDemoMode } from './demoModePin';
 import fs from 'fs';
 import path from 'path';
 import * as supabaseLib from '../lib/supabase';
@@ -361,6 +362,14 @@ describe('STAYNEXA SECURITY & SUPABASE INTEGRATION AUDIT SUITE', () => {
 
   // ─── 8. APPLICATION LAYER ORDER SERVICE & REALTIME ISOLATION ─────────────
   describe('Application Layer Order Service & Realtime Isolation', () => {
+    let unpinDemoMode: () => void;
+    beforeEach(() => {
+      unpinDemoMode = pinDemoMode();
+    });
+    afterEach(() => {
+      unpinDemoMode();
+    });
+
     it('should set direct-payment orders to pending_payment in orderService.create', () => {
       const directPayOrder = orderService.create({
         hotel_id: 'hotel-001',

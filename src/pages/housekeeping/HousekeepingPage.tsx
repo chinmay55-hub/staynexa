@@ -9,6 +9,7 @@ import {
   Eye
 } from 'lucide-react';
 import { useAuth } from '../../contexts/useAuth';
+import { nowIso } from '../../utils/clock';
 import { 
   housekeepingService, 
   roomService, 
@@ -144,7 +145,7 @@ export default function HousekeepingPage({ defaultTab = 'TASKS' }: { defaultTab?
     try {
       await housekeepingService.updateTaskAsync(taskId, {
         status: 'IN_PROGRESS',
-        started_at: new Date().toISOString(),
+        started_at: nowIso(),
       });
       setTasks([...housekeepingService.getTasks(hotelId)]);
       setRooms([...roomService.getAll(hotelId)]);

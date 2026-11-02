@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import { 
   Check, 
   CheckCircle2, 
@@ -12,6 +12,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { useAuth } from '../../contexts/useAuth';
+import { isoDateOffset, nowIso, nowMs } from '../../utils/clock';
 import { 
   reservationService, 
   roomService, 
@@ -31,6 +32,72 @@ export interface QuickCheckInModalProps {
   hotelId: string;
 }
 
+type CheckInGuestForm = {
+  firstName: string;
+  lastName: string;
+  phone: string;
+  email: string;
+  idType: string;
+  idNumber: string;
+  idVerified: boolean;
+};
+
+const EMPTY_GUEST_FORM: CheckInGuestForm = {
+  firstName: '',
+  lastName: '',
+  phone: '',
+  email: '',
+  idType: 'AADHAAR',
+  idNumber: '',
+  idVerified: true,
+};
+
+function guestFormFrom(guest: NonNullable<Reservation['guest']>): CheckInGuestForm {
+  return {
+    firstName: guest.first_name || '',
+    lastName: guest.last_name || '',
+    phone: guest.phone || '',
+    email: guest.email || '',
+    idType: guest.id_type || 'AADHAAR',
+    idNumber: guest.id_number || '',
+    idVerified: true,
+  };
+}
+
+function buildInitialCheckIn(
+  reservation: Reservation | null | undefined,
+  preselectedRoomId: string | null | undefined,
+  allReservations: Reservation[],
+) {
+  const base = {
+    activeRes: reservation ?? null,
+    selectedRoomId: preselectedRoomId ?? '',
+    guestForm: EMPTY_GUEST_FORM,
+    depositAmount: 2000,
+  };
+  if (reservation) {
+    return {
+      ...base,
+      selectedRoomId: reservation.room_id || base.selectedRoomId,
+      guestForm: reservation.guest ? guestFormFrom(reservation.guest) : base.guestForm,
+      depositAmount: Math.max(1000, Math.round((reservation.total_amount || 5000) * 0.2)),
+    };
+  }
+  if (preselectedRoomId) {
+    const arrivingRes = allReservations.find(
+      r => r.room_id === preselectedRoomId && (r.status === 'CONFIRMED' || r.status === 'PENDING')
+    );
+    if (arrivingRes) {
+      return {
+        ...base,
+        activeRes: arrivingRes,
+        guestForm: arrivingRes.guest ? guestFormFrom(arrivingRes.guest) : base.guestForm,
+      };
+    }
+  }
+  return base;
+}
+
 export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
   isOpen,
   onClose,
@@ -46,23 +113,16 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
   const allGuests = guestService.getAll(hotelId);
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
-  const [activeRes, setActiveRes] = useState<Reservation | null>(reservation || null);
-  const [selectedRoomId, setSelectedRoomId] = useState<string>(preselectedRoomId || '');
+  const [initialCheckIn] = useState(() => buildInitialCheckIn(reservation, preselectedRoomId, allReservations));
+  const [activeRes] = useState<Reservation | null>(initialCheckIn.activeRes);
+  const [selectedRoomId, setSelectedRoomId] = useState<string>(initialCheckIn.selectedRoomId);
   const [allowUpgrade, setAllowUpgrade] = useState(false);
 
   // Step 1: Guest Information
-  const [guestForm, setGuestForm] = useState({
-    firstName: '',
-    lastName: '',
-    phone: '',
-    email: '',
-    idType: 'AADHAAR',
-    idNumber: '',
-    idVerified: true,
-  });
+  const [guestForm, setGuestForm] = useState<CheckInGuestForm>(initialCheckIn.guestForm);
 
   // Step 3: Advance Deposit
-  const [depositAmount, setDepositAmount] = useState<number>(2000);
+  const [depositAmount, setDepositAmount] = useState<number>(initialCheckIn.depositAmount);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('UPI');
   const [paymentRef, setPaymentRef] = useState<string>('');
   const [isDepositWaived, setIsDepositWaived] = useState<boolean>(false);
@@ -74,68 +134,6 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const createdWalkInResRef = useRef<Reservation | null>(null);
   const toast = useToast();
-
-  // Synchronize state when modal opens or reservation changes
-  useEffect(() => {
-    createdWalkInResRef.current = null;
-    setSubmitError(null);
-    setIsSubmitting(false);
-
-    if (reservation) {
-      setActiveRes(reservation);
-      if (reservation.room_id) {
-        setSelectedRoomId(reservation.room_id);
-      }
-      if (reservation.guest) {
-        setGuestForm({
-          firstName: reservation.guest.first_name || '',
-          lastName: reservation.guest.last_name || '',
-          phone: reservation.guest.phone || '',
-          email: reservation.guest.email || '',
-          idType: reservation.guest.id_type || 'AADHAAR',
-          idNumber: reservation.guest.id_number || '',
-          idVerified: true,
-        });
-      }
-      // Calculate suggested deposit (20% of stay or 2000 min)
-      const suggested = Math.max(1000, Math.round((reservation.total_amount || 5000) * 0.2));
-      setDepositAmount(suggested);
-    } else if (preselectedRoomId) {
-      setSelectedRoomId(preselectedRoomId);
-      // Check if there is an arriving confirmed reservation for this room
-      const arrivingRes = allReservations.find(
-        r => r.room_id === preselectedRoomId && (r.status === 'CONFIRMED' || r.status === 'PENDING')
-      );
-      if (arrivingRes) {
-        setActiveRes(arrivingRes);
-        if (arrivingRes.guest) {
-          setGuestForm({
-            firstName: arrivingRes.guest.first_name || '',
-            lastName: arrivingRes.guest.last_name || '',
-            phone: arrivingRes.guest.phone || '',
-            email: arrivingRes.guest.email || '',
-            idType: arrivingRes.guest.id_type || 'AADHAAR',
-            idNumber: arrivingRes.guest.id_number || '',
-            idVerified: true,
-          });
-        }
-      } else {
-        // Walk-in mode for this room
-        setActiveRes(null);
-        setGuestForm({
-          firstName: '',
-          lastName: '',
-          phone: '',
-          email: '',
-          idType: 'AADHAAR',
-          idNumber: '',
-          idVerified: true,
-        });
-      }
-    }
-    setStep(1);
-    setIsCompleted(false);
-  }, [reservation, preselectedRoomId, isOpen]);
 
   // Clean Available Rooms matching criteria
   const availableRooms = rooms.filter(r => {
@@ -207,8 +205,8 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
             guestId = newGuest.id;
           }
 
-          const todayStr = new Date().toISOString().split('T')[0];
-          const tomorrowStr = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+          const todayStr = isoDateOffset(0);
+          const tomorrowStr = isoDateOffset(1);
           const rate = targetRoomType?.base_rate || 4500;
           const subtotal = rate;
           const tax = Math.round(subtotal * 0.18);
@@ -272,7 +270,7 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
             tax_amount: taxAmount,
             discount_amount: 0,
             total: roomChargeTotal,
-            posted_at: new Date().toISOString(),
+            posted_at: nowIso(),
             posted_by: user?.full_name || 'Front Desk',
           });
         }
@@ -287,7 +285,7 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({
               reservation_id: checkedInRes.id,
               amount: Number(depositAmount),
               method: paymentMethod,
-              reference: paymentRef || `DEP-${Date.now().toString().slice(-6)}`,
+              reference: paymentRef || `DEP-${nowMs().toString().slice(-6)}`,
               notes: `Advance security deposit collected at check-in (${paymentMethod})`,
               received_by: user?.full_name || 'Front Desk',
             });

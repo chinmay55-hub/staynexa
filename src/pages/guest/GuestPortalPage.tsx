@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
+import { nowMs } from '../../utils/clock';
 import { 
   Building2, 
   Wifi, 
@@ -124,10 +125,15 @@ export default function GuestPortalPage() {
   ]);
   const [chatInput, setChatInput] = useState('');
 
-  useEffect(() => {
-    let isMounted = true;
+  const [loadedToken, setLoadedToken] = useState(token);
+  if (token !== loadedToken) {
+    setLoadedToken(token);
     setIsLoading(true);
     setError(null);
+  }
+
+  useEffect(() => {
+    let isMounted = true;
 
     async function resolveSession() {
       // 1. Secure Supabase session resolution via RPC when Supabase is configured
@@ -656,7 +662,7 @@ export default function GuestPortalPage() {
     if (!text || !hotel) return;
 
     const newGuestMsg: ChatMessage = {
-      id: `m-${Date.now()}`,
+      id: `m-${nowMs()}`,
       sender: 'GUEST',
       text,
       timestamp: 'Just now'
