@@ -3,7 +3,7 @@
 
 import { supabase, isSupabaseConfigured, isDemoMode } from '../lib/supabase';
 import { realtimeSync } from './realtimeSync';
-import { isUuid } from '../utils/tenantId';
+import { isUuid, toDbUuid } from '../utils/tenantId';
 import type { Order, OrderItem, OrderStatus } from '../types';
 
 function generateId(): string {
@@ -458,7 +458,7 @@ export const orderService = {
           })),
         });
 
-        if (rpcErr || !rpcData) {
+                if (rpcErr || !rpcData) {
           throw new Error(rpcErr?.message || 'Server order validation failed');
         }
 

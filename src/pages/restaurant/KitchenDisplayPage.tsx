@@ -66,15 +66,49 @@ export default function KitchenDisplayPage() {
     setOrders([...orderService.getActive(hotelId)]);
   };
 
-  const handleClearCompleted = () => {
+    const handleClearCompleted = () => {
     orderService.clearCompleted(hotelId);
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const hotelKey = `staynexa_cleared_orders_${hotelId}`;
+        const existing: string[] = JSON.parse(localStorage.getItem(hotelKey) || '[]');
+        orders.forEach(o => {
+          if (o.status === 'DELIVERED' || o.status === 'CANCELLED') {
+            if (!existing.includes(o.id)) existing.push(o.id);
+          }
+        });
+        localStorage.setItem(hotelKey, JSON.stringify(existing));
+      } catch {}
+    }
     fetchDirectKdsOrders().then(fresh => setOrders(fresh));
   };
 
+  const handleResetKdsOrders = () => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const hotelKey = `staynexa_cleared_orders_${hotelId}`;
+        const allIds = orders.map(o => o.id);
+        localStorage.setItem(hotelKey, JSON.stringify(allIds));
+      } catch {}
+    }
+    setOrders([]);
+  };
+
   // Direct database fetch helper
+    const getClearedOrderIds = useCallback((): Set<string> => {
+    if (typeof window === 'undefined' || !window.localStorage) return new Set();
+    try {
+      const stored = JSON.parse(localStorage.getItem(`staynexa_cleared_orders_${hotelId}`) || '[]');
+      return new Set(Array.isArray(stored) ? stored : []);
+    } catch {
+      return new Set();
+    }
+  }, [hotelId]);
+
   const fetchDirectKdsOrders = useCallback(async (): Promise<Order[]> => {
     reloadDemoStoreFromStorage();
-    let baseOrders = orderService.getActive(hotelId);
+    const clearedIds = getClearedOrderIds();
+    let baseOrders = orderService.getActive(hotelId).filter(o => !clearedIds.has(o.id));
 
     if (isSupabaseConfigured() && supabase) {
       try {
@@ -88,7 +122,7 @@ export default function KitchenDisplayPage() {
           .order('created_at', { ascending: false });
 
         if (!dbErr && dbOrders && dbOrders.length > 0) {
-          return dbOrders.map(o => ({
+          return dbOrders.filter(o => !clearedIds.has(o.id)).map(o => ({
             ...o,
             status: (o.status || 'PENDING').toUpperCase() as OrderStatus,
             items: (o.items && Array.isArray(o.items) && o.items.length > 0) ? o.items : [],

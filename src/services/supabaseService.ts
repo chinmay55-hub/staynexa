@@ -3,6 +3,7 @@
 // Strictly isolated by tenant context and authenticated user session
 
 import { supabase } from '../lib/supabase';
+import { toDbHotelId, isUuid } from '../utils/tenantId';
 import type { 
   Hotel, HotelBranding, HotelSettings, RoomType, Room, Guest, 
   Reservation, Folio, FolioItem, Payment, Order, OrderItem, HousekeepingTask, 
@@ -822,29 +823,53 @@ export const supabaseQrService = {
 
   async generate(hotelId: string, roomId?: string, customToken?: string): Promise<QRCode> {
     const client = getClient();
-    // Cryptographically secure, unpredictable token
+    const dbHotelId = toDbHotelId(hotelId);
+
+    // Resolve roomId to a valid database UUID if possible
+    let dbRoomId = roomId;
+    if (dbRoomId && !isUuid(dbRoomId)) {
+      try {
+        const { data: dbRooms } = await client
+          .from('rooms')
+          .select('id, number')
+          .eq('hotel_id', dbHotelId);
+
+        if (dbRooms && dbRooms.length > 0) {
+          const match = dbRooms.find(r => r.id === dbRoomId || dbRoomId?.endsWith(r.number) || dbRoomId?.includes(r.number));
+          if (match) {
+            dbRoomId = match.id;
+          } else {
+            dbRoomId = dbRooms[0].id;
+          }
+        } else {
+          dbRoomId = undefined;
+        }
+      } catch {
+        dbRoomId = undefined;
+      }
+    }
+
     const randomEntropy = typeof crypto !== 'undefined' && crypto.randomUUID 
       ? crypto.randomUUID().replace(/-/g, '').slice(0, 16)
       : Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
     const token = customToken || `sn-${randomEntropy}`;
 
-    // Deactivate previous active QR code for this specific room to prevent duplicate active tokens
-    if (roomId) {
+    if (dbRoomId) {
       await client
         .from('qr_codes')
         .update({ is_active: false })
-        .eq('hotel_id', hotelId)
-        .eq('room_id', roomId)
+        .eq('hotel_id', dbHotelId)
+        .eq('room_id', dbRoomId)
         .eq('is_active', true);
     }
 
     const { data, error } = await client
       .from('qr_codes')
       .insert({
-        hotel_id: hotelId,
-        room_id: roomId || null,
+        hotel_id: dbHotelId,
+        room_id: dbRoomId || null,
         token,
-        type: roomId ? 'ROOM' : 'HOTEL',
+        type: dbRoomId ? 'ROOM' : 'HOTEL',
         is_active: true,
         created_at: new Date().toISOString(),
       })
@@ -869,6 +894,7 @@ export const supabaseQrService = {
 export const supabaseSyncService = {
   async fetchHotelData(hotelId: string) {
     const client = getClient();
+    const dbHotelId = toDbHotelId(hotelId);
     const [
       roomsRes,
       roomTypesRes,
@@ -886,21 +912,21 @@ export const supabaseSyncService = {
       itemsRes,
       qrCodesRes,
     ] = await Promise.allSettled([
-      client.from('rooms').select('*, room_type:room_types(*)').eq('hotel_id', hotelId),
-      client.from('room_types').select('*').eq('hotel_id', hotelId),
-      client.from('guests').select('*').eq('hotel_id', hotelId),
-      client.from('reservations').select('*, guest:guests(*), room:rooms(*), room_type:room_types(*)').eq('hotel_id', hotelId),
-      client.from('orders').select('*, items:order_items(*), room:rooms(*), guest:guests(*)').eq('hotel_id', hotelId),
-      client.from('service_requests').select('*, room:rooms(*), guest:guests(*), service:hotel_services(*)').eq('hotel_id', hotelId),
-      client.from('housekeeping_tasks').select('*, room:rooms(*)').eq('hotel_id', hotelId),
-      client.from('maintenance_tickets').select('*, room:rooms(*)').eq('hotel_id', hotelId),
-      client.from('folios').select('*').eq('hotel_id', hotelId),
-      client.from('hotel_branding').select('*').eq('hotel_id', hotelId).maybeSingle(),
-      client.from('hotel_settings').select('*').eq('hotel_id', hotelId).maybeSingle(),
-      client.from('hotel_services').select('*').eq('hotel_id', hotelId),
-      client.from('menu_categories').select('*').eq('hotel_id', hotelId),
-      client.from('menu_items').select('*').eq('hotel_id', hotelId),
-      client.from('qr_codes').select('*, room:rooms(*)').eq('hotel_id', hotelId),
+      client.from('rooms').select('*, room_type:room_types(*)').eq('hotel_id', dbHotelId),
+      client.from('room_types').select('*').eq('hotel_id', dbHotelId),
+      client.from('guests').select('*').eq('hotel_id', dbHotelId),
+      client.from('reservations').select('*, guest:guests(*), room:rooms(*), room_type:room_types(*)').eq('hotel_id', dbHotelId),
+      client.from('orders').select('*, items:order_items(*), room:rooms(*), guest:guests(*)').eq('hotel_id', dbHotelId),
+      client.from('service_requests').select('*, room:rooms(*), guest:guests(*), service:hotel_services(*)').eq('hotel_id', dbHotelId),
+      client.from('housekeeping_tasks').select('*, room:rooms(*)').eq('hotel_id', dbHotelId),
+      client.from('maintenance_tickets').select('*, room:rooms(*)').eq('hotel_id', dbHotelId),
+      client.from('folios').select('*').eq('hotel_id', dbHotelId),
+      client.from('hotel_branding').select('*').eq('hotel_id', dbHotelId).maybeSingle(),
+      client.from('hotel_settings').select('*').eq('hotel_id', dbHotelId).maybeSingle(),
+      client.from('hotel_services').select('*').eq('hotel_id', dbHotelId),
+      client.from('menu_categories').select('*').eq('hotel_id', dbHotelId),
+      client.from('menu_items').select('*').eq('hotel_id', dbHotelId),
+      client.from('qr_codes').select('*, room:rooms(*)').eq('hotel_id', dbHotelId),
     ]);
 
     return {

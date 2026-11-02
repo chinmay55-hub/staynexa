@@ -1,7 +1,7 @@
 /**
  * Dynamic Base URL & Guest Portal QR Code Utility
- * Automatically resolves current window.location.origin or environment URL
- * to prevent 404 routing errors on live cloud deployments or local tunnels.
+ * Automatically resolves current window.location.origin, configured tunnel, or cloud URL
+ * to prevent routing errors on live cloud deployments or mobile phone scans.
  */
 
 interface RoomLikeTarget {
@@ -11,28 +11,49 @@ interface RoomLikeTarget {
   number?: string;
 }
 
+export const getStoredTunnelUrl = (): string | null => {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      const stored = window.localStorage.getItem('staynexa_public_tunnel_url');
+      if (stored && stored.trim()) return stored.trim().replace(/\/+$/, '');
+    } catch {}
+  }
+  return null;
+};
+
+export const setCustomPublicBaseUrl = (url: string | null): void => {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      if (url && url.trim()) {
+        window.localStorage.setItem('staynexa_public_tunnel_url', url.trim().replace(/\/+$/, ''));
+      } else {
+        window.localStorage.removeItem('staynexa_public_tunnel_url');
+      }
+      window.dispatchEvent(new Event('staynexa_base_url_changed'));
+    } catch {}
+  }
+};
+
 /**
- * Returns the current application base URL.
- * Prefers active public tunnel/domain over localhost so scanned QRs work on mobile phones.
+ * Returns the current application base URL for QR codes.
+ * Prefers explicit user override, live public domain, or Cloud URL over raw localhost.
  */
 export const getBaseUrl = (): string => {
   if (typeof window !== 'undefined' && window.location) {
+    // 1. Explicit user override in localStorage (e.g. active tunnel preview)
+    const storedTunnel = getStoredTunnelUrl();
+    if (storedTunnel) {
+      return storedTunnel;
+    }
+
     const origin = window.location.origin || '';
     const hostname = window.location.hostname || '';
 
-    // 1. If currently accessed via a public tunnel, domain, or LAN IP, use origin directly
+    // 2. If currently accessed via live cloud domain or non-localhost hostname, use origin directly
     if (origin && hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
       return origin;
     }
-    // 2. If explicitly configured in localStorage (e.g. active tunnel preview)
-    try {
-      if (window.localStorage) {
-        const storedTunnel = window.localStorage.getItem('staynexa_public_tunnel_url');
-        if (storedTunnel) {
-          return storedTunnel.replace(/\/+$/, '');
-        }
-      }
-    } catch {}
+
     // 3. Environment variable override
     if (import.meta.env.VITE_PUBLIC_URL) {
       return (import.meta.env.VITE_PUBLIC_URL as string).replace(/\/+$/, '');
@@ -40,6 +61,12 @@ export const getBaseUrl = (): string => {
     if (import.meta.env.VITE_APP_URL) {
       return (import.meta.env.VITE_APP_URL as string).replace(/\/+$/, '');
     }
+
+    // 4. Default to live Vercel cloud URL when accessed from localhost so scanned QRs work on mobile phones
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      return 'https://staynexa-nine.vercel.app';
+    }
+
     if (origin) {
       return origin;
     }

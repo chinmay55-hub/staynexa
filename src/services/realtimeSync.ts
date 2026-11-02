@@ -203,7 +203,24 @@ class RealtimeSyncService {
       }
     }
 
-    // Network broadcast is handled safely through authenticated hotel-scoped channels
+    // 4. Remote WebSocket broadcast relay to all other devices/browsers connected to Supabase
+    if (isSupabaseConfigured() && supabase && this.activeSupabaseChannels.size > 0) {
+      const sentChannels = new Set<any>();
+      this.activeSupabaseChannels.forEach((channel) => {
+        if (!sentChannels.has(channel)) {
+          sentChannels.add(channel);
+          try {
+            channel.send({
+              type: 'broadcast',
+              event: type,
+              payload,
+            });
+          } catch (err) {
+            console.warn('[RealtimeSync] WebSocket broadcast send failed:', err);
+          }
+        }
+      });
+    }
   }
 
   // Connect to Supabase Realtime WebSocket channel for a hotel
@@ -212,14 +229,28 @@ class RealtimeSyncService {
       return () => {};
     }
 
-    if (this.activeSupabaseChannels.has(hotelId)) {
+    const dbHotelId = toDbHotelId(hotelId);
+    const channelKey = `staynexa-hotel-${dbHotelId}`;
+
+    if (this.activeSupabaseChannels.has(channelKey) || this.activeSupabaseChannels.has(hotelId)) {
       return () => this.disconnectSupabaseHotelChannel(hotelId);
     }
 
-    const dbHotelId = toDbHotelId(hotelId);
-
     try {
-      const channel = supabase.channel(`hotel-realtime-${hotelId}`)
+      const channel = supabase.channel(channelKey)
+        .on(
+          'broadcast',
+          { event: '*' },
+          (event: { event?: string; payload?: any }) => {
+            if (event.event && event.payload) {
+              const eventKey = `remote-${event.event}-${JSON.stringify(event.payload).slice(0, 40)}`;
+              if (!this.lastProcessedEventTimestamps.has(eventKey)) {
+                this.markProcessed(eventKey);
+                this.dispatchLocal(event.event as RealtimeEventType, event.payload);
+              }
+            }
+          }
+        )
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'orders', filter: `hotel_id=eq.${dbHotelId}` },
@@ -285,11 +316,13 @@ class RealtimeSyncService {
         .subscribe((status) => {
           if (status === 'SUBSCRIBED') {
             this.setConnectionState(true);
-            console.info(`[StayNexa Realtime] Subscribed to live WebSocket updates for hotel: ${hotelId} (UUID: ${dbHotelId})`);
+            console.info(`[StayNexa Realtime] Subscribed to live WebSocket updates for hotel: ${hotelId} (channel: ${channelKey})`);
           }
         });
 
+      this.activeSupabaseChannels.set(channelKey, channel);
       this.activeSupabaseChannels.set(hotelId, channel);
+      this.activeSupabaseChannels.set(dbHotelId, channel);
 
       return () => this.disconnectSupabaseHotelChannel(hotelId);
     } catch (err) {
@@ -299,10 +332,14 @@ class RealtimeSyncService {
   }
 
   public disconnectSupabaseHotelChannel(hotelId: string): void {
-    const channel = this.activeSupabaseChannels.get(hotelId);
+    const dbHotelId = toDbHotelId(hotelId);
+    const channelKey = `staynexa-hotel-${dbHotelId}`;
+    const channel = this.activeSupabaseChannels.get(channelKey) || this.activeSupabaseChannels.get(hotelId);
     if (channel && supabase) {
       supabase.removeChannel(channel);
+      this.activeSupabaseChannels.delete(channelKey);
       this.activeSupabaseChannels.delete(hotelId);
+      this.activeSupabaseChannels.delete(dbHotelId);
     }
   }
 }

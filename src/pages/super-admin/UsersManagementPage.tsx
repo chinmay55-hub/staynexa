@@ -31,6 +31,7 @@ export default function UsersManagementPage() {
     full_name: '',
     email: '',
     phone: '',
+    password: 'password123',
     role: 'RECEPTION' as UserRole,
     hotel_id: 'hotel-001',
   });
@@ -113,13 +114,27 @@ export default function UsersManagementPage() {
       role: newUser.role,
       is_active: true,
     });
-    if (newUser.role !== 'SUPER_ADMIN' && newUser.hotel_id) {
+        if (newUser.role !== 'SUPER_ADMIN' && newUser.hotel_id) {
       staffService.createMembership({
         hotel_id: newUser.hotel_id,
         user_id: createdProfile.user_id,
         role: newUser.role,
         is_active: true,
       });
+    }
+
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const customCreds = JSON.parse(localStorage.getItem('staynexa_custom_credentials') || '{}');
+        customCreds[newUser.email.toLowerCase().trim()] = {
+          password: newUser.password || 'password123',
+          userId: createdProfile.user_id,
+          role: newUser.role,
+          hotelId: newUser.hotel_id,
+          fullName: newUser.full_name,
+        };
+        localStorage.setItem('staynexa_custom_credentials', JSON.stringify(customCreds));
+      } catch {}
     }
     setUsers([...staffService.getAllProfiles()]);
     setMemberships([...staffService.getAllMemberships()]);
@@ -128,6 +143,7 @@ export default function UsersManagementPage() {
       full_name: '',
       email: '',
       phone: '',
+      password: 'password123',
       role: 'RECEPTION',
       hotel_id: hotels[0]?.id || 'hotel-001',
     });

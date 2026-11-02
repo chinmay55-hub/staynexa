@@ -21,6 +21,7 @@ import {
 } from '../../services/demoDataService';
 import type { Hotel, RoomType } from '../../types';
 import { Button, Input, Card, CardContent } from '../../components/ui';
+import { realtimeSync } from '../../services/realtimeSync';
 
 const STEPS = [
   'Hotel Info',
@@ -100,6 +101,7 @@ export default function HotelOnboardingPage() {
     full_name: 'Rajendra Singh',
     email: 'rajendra@royalhaveli.in',
     phone: '+91 98290 12345',
+    password: 'password123',
   });
 
   const [services, setServices] = useState([
@@ -170,7 +172,7 @@ export default function HotelOnboardingPage() {
       { name: 'Housekeeping', code: 'HK' },
       { name: 'Restaurant & Kitchen', code: 'FB' },
     ]);
-    setAdminUser({ full_name: '', email: '', phone: '' });
+    setAdminUser({ full_name: '', email: '', phone: '', password: '' });
     setServices([]);
     setRestaurant({ name: '', open_time: '07:00', close_time: '23:00' });
   };
@@ -226,6 +228,7 @@ export default function HotelOnboardingPage() {
       full_name: 'Rajendra Singh',
       email: 'rajendra@royalhaveli.in',
       phone: '+91 98290 12345',
+      password: 'password123',
     });
     setServices([
       { name: 'Extra Towels & Linens', category: 'Housekeeping' },
@@ -451,7 +454,7 @@ export default function HotelOnboardingPage() {
           is_active: true,
         });
       }
-      const existingMemberships = staffService.getAllMemberships();
+            const existingMemberships = staffService.getAllMemberships();
       if (!existingMemberships.some(m => m.user_id === adminProfile!.user_id && m.hotel_id === targetHotelId)) {
         staffService.createMembership({
           hotel_id: targetHotelId!,
@@ -460,6 +463,35 @@ export default function HotelOnboardingPage() {
           is_active: true,
         });
       }
+
+      // Save custom admin credentials for instant login across all devices
+      if (typeof window !== 'undefined' && window.localStorage) {
+        try {
+          const customCreds = JSON.parse(localStorage.getItem('staynexa_custom_credentials') || '{}');
+          customCreds[adminUser.email.toLowerCase().trim()] = {
+            password: adminUser.password || 'password123',
+            userId: adminProfile.user_id,
+            role: 'HOTEL_ADMIN',
+            hotelId: targetHotelId,
+            fullName: adminUser.full_name || 'Hotel Admin',
+          };
+          localStorage.setItem('staynexa_custom_credentials', JSON.stringify(customCreds));
+        } catch {}
+      }
+
+      // Emit real-time notification
+      realtimeSync.emit('NEW_NOTIFICATION', {
+        notification: {
+          id: `notif-${Date.now()}`,
+          hotel_id: targetHotelId,
+          user_id: adminProfile.user_id,
+          type: 'SYSTEM',
+          title: 'Hotel Onboarded & Credentials Active',
+          message: `Property ${hotelInfo.name} activated with login ${adminUser.email}`,
+          is_read: false,
+          created_at: new Date().toISOString(),
+        }
+      });
     }
 
     // 8. Provision Initial Services

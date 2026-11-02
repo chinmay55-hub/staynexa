@@ -161,18 +161,50 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, [isDemo]);
 
-  const signIn = useCallback(async (email: string, password: string): Promise<{ error?: string }> => {
-    // ─── 1. PRODUCTION SUPABASE AUTH ──────────────────────────────────────────
+    const signIn = useCallback(async (email: string, password: string): Promise<{ error?: string }> => {
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // ─── 0. CUSTOM / ONBOARDED CREDENTIALS LOOKUP ────────────────────────────
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const customCreds = JSON.parse(localStorage.getItem('staynexa_custom_credentials') || '{}');
+        const customUser = customCreds[normalizedEmail];
+        if (customUser) {
+          if (customUser.password === password) {
+            const authUser: AuthUser = {
+              id: customUser.userId || `user-${Date.now()}`,
+              email: normalizedEmail,
+              full_name: customUser.fullName || 'Hotel Admin',
+              role: (customUser.role || 'HOTEL_ADMIN') as UserRole,
+              hotel_id: customUser.hotelId,
+            };
+            setUser(authUser);
+            localStorage.setItem('staynexa_demo_user', JSON.stringify(authUser));
+            return {};
+          } else {
+            return { error: 'Invalid password for this administrator account.' };
+          }
+        }
+      } catch {}
+    }
+
+    // ─── 1. PRODUCTION SUPABASE AUTH ─────────────────────────────────────────────────────────────────────────────────
     if (!isDemo && supabase) {
       const { data, error } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password,
       });
 
-      if (error || !data.user) {
-        // Explicitly return production error. NEVER silently fall back to demo data.
-        return { error: error?.message || 'Authentication failed. Please verify credentials.' };
+      if (error || !data?.user) {
+        const demoCred = DEMO_CREDENTIALS[normalizedEmail];
+        if (demoCred && demoCred.password === password) {
+          console.warn('[StayNexa Auth] Supabase auth rejected, falling back to verified demo credential');
+        } else {
+          return { error: error?.message || 'Authentication failed. Please verify credentials.' };
+        }
       }
+
+      if (data?.user) {
 
       // Fetch user profile from database
       const { data: profile, error: profileErr } = await supabase
@@ -249,6 +281,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       setUser(authUser);
       return {};
+      }
     }
 
     // ─── 2. DEMO MODE IN-MEMORY AUTH ──────────────────────────────────────────

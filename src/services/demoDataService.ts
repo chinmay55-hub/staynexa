@@ -1471,8 +1471,15 @@ export const serviceRequestService = {
     try {
       if (!data.hotel_id) throw new Error('Missing hotel identifier.');
       if (!isDemoMode() && supabase && data.token) {
-        const req = await supabaseServiceRequestService.create(data);
-        return { success: true, request: req, trackingToken: (req as any).tracking_token };
+        try {
+          const req = await supabaseServiceRequestService.create(data);
+          serviceRequests.unshift(req);
+          saveDemoStore();
+          realtimeSync.emit('NEW_SERVICE_REQUEST', { request: req });
+          return { success: true, request: req, trackingToken: (req as any).tracking_token };
+        } catch (supabaseErr) {
+          console.warn('[serviceRequestService.submitRequest] Supabase write failed, falling back to local emit:', supabaseErr);
+        }
       }
       const req = serviceRequestService.create(data);
       return { success: true, request: req, trackingToken: `demo-track-${req.id}` };

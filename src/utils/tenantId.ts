@@ -50,3 +50,15 @@ export function isSameHotel(idA?: string | null, idB?: string | null): boolean {
   if (a === b) return true;
   return HOTEL_ID_MAP[a] === b || HOTEL_ID_MAP[b] === a || toDbHotelId(a) === toDbHotelId(b);
 }
+
+/**
+ * Converts a demo ID (e.g. 'mi-001' or 'svc-001') to a valid UUID format
+ * if it is not already an RFC4122 UUID.
+ */
+export function toDbUuid(id?: string | null, namespace = '00000000-0000-0000-0020-'): string | undefined {
+  if (!id) return undefined;
+  const trimmed = id.trim();
+  if (isUuid(trimmed)) return trimmed;
+  const digits = (trimmed.replace(/\D/g, '') || '1').padStart(12, '0').slice(-12);
+  return `${namespace}${digits}`;
+}

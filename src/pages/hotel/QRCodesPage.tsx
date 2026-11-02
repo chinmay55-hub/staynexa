@@ -9,13 +9,14 @@ import {
   ShieldCheck,
   Loader2,
   Copy,
-  AlertTriangle
+  AlertTriangle,
+  Globe
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { useAuth } from '../../contexts/useAuth';
 import { qrService, roomService, hotelService, demoDataService } from '../../services/demoDataService';
 import { isDemoMode, isSupabaseConfigured } from '../../lib/supabase';
-import { generateGuestPortalUrl } from '../../utils/qrCode';
+import { generateGuestPortalUrl, getBaseUrl, setCustomPublicBaseUrl, getStoredTunnelUrl } from '../../utils/qrCode';
 import type { QRCode as QRCodeType } from '../../types';
 import { Card, CardContent, Button, Modal, useToast } from '../../components/ui';
 
@@ -36,6 +37,16 @@ export default function QRCodesPage() {
   const [actionRoomId, setActionRoomId] = useState<string | null>(null);
 
   const [confirmRevokeRoom, setConfirmRevokeRoom] = useState<{ roomId: string; roomNumber: string } | null>(null);
+  const [activeBaseUrl, setActiveBaseUrl] = useState(() => getBaseUrl());
+  const [isEditingTunnel, setIsEditingTunnel] = useState(false);
+  const [customTunnelInput, setCustomTunnelInput] = useState(() => getStoredTunnelUrl() || '');
+
+  const handleSetBaseUrl = (url: string | null) => {
+    setCustomPublicBaseUrl(url);
+    setActiveBaseUrl(getBaseUrl());
+    setIsEditingTunnel(false);
+    toast.success('QR Base URL updated', `Standees will link to: ${getBaseUrl()}`);
+  };
 
   // Sync rooms and QR codes from Supabase on mount
   useEffect(() => {
@@ -106,7 +117,12 @@ export default function QRCodesPage() {
     if (actionRoomId) return;
     setActionRoomId(roomId);
     try {
-      await qrService.generateAsync(hotelId, roomId);
+            const targetRoom = rooms.find(r => r.id === roomId);
+      const roomSuffix = targetRoom ? `r${targetRoom.number}-` : '';
+      const entropy = Math.random().toString(36).substring(2, 8);
+      const customToken = `sn-${roomSuffix}${entropy}`;
+
+      await qrService.generateAsync(hotelId, roomId, customToken);
       setQrCodes([...qrService.getAll(hotelId)]);
       toast.success('QR code generated', 'Room QR standee token saved');
     } catch (err: any) {
@@ -124,7 +140,12 @@ export default function QRCodesPage() {
       if (existing) {
         await qrService.deactivateAsync(existing.id);
       }
-      await qrService.generateAsync(hotelId, roomId);
+            const targetRoom = rooms.find(r => r.id === roomId);
+      const roomSuffix = targetRoom ? `r${targetRoom.number}-` : '';
+      const entropy = Math.random().toString(36).substring(2, 8);
+      const customToken = `sn-${roomSuffix}${entropy}`;
+
+      await qrService.generateAsync(hotelId, roomId, customToken);
       setQrCodes([...qrService.getAll(hotelId)]);
       toast.success('QR code regenerated', 'Old token revoked and new standee URL active');
     } catch (err: any) {
@@ -198,6 +219,56 @@ export default function QRCodesPage() {
           >
             {isGenerating ? 'Generating...' : 'Generate Missing QRs'}
           </Button>
+        </div>
+      </div>
+
+      {/* Dynamic Base URL & Tunnel Control */}
+      <div className="bg-stone-50 border border-stone-200 rounded-xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+        <div className="flex items-center gap-2">
+          <Globe className="w-4 h-4 text-stone-600 shrink-0" />
+          <span className="text-stone-600 font-medium">Scannable QR Base URL:</span>
+          <span className="font-mono font-bold text-stone-900 bg-white px-2 py-0.5 rounded border border-stone-200">
+            {activeBaseUrl}
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => handleSetBaseUrl('https://staynexa-nine.vercel.app')}
+            className={activeBaseUrl === 'https://staynexa-nine.vercel.app' ? 'font-bold text-[#c9a84c]' : ''}
+          >
+            Live Vercel
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => handleSetBaseUrl(window.location.origin)}
+            className={activeBaseUrl === window.location.origin ? 'font-bold text-[#c9a84c]' : ''}
+          >
+            Current Host
+          </Button>
+          {isEditingTunnel ? (
+            <div className="flex items-center gap-1.5">
+              <input
+                type="text"
+                placeholder="https://...trycloudflare.com"
+                value={customTunnelInput}
+                onChange={e => setCustomTunnelInput(e.target.value)}
+                className="px-2 py-1 text-xs border border-stone-300 rounded font-mono w-56"
+              />
+              <Button size="sm" variant="primary" onClick={() => handleSetBaseUrl(customTunnelInput)}>
+                Save
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setIsEditingTunnel(false)}>
+                Cancel
+              </Button>
+            </div>
+          ) : (
+            <Button size="sm" variant="outline" onClick={() => setIsEditingTunnel(true)}>
+              Custom Tunnel URL
+            </Button>
+          )}
         </div>
       </div>
 
