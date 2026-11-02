@@ -46,10 +46,11 @@ export default function HousekeepingPage({ defaultTab = 'TASKS' }: { defaultTab?
   const [rooms, setRooms] = useState(() => roomService.getAll(hotelId));
   const [guestRequests, setGuestRequests] = useState(() => serviceRequestService.getAll(hotelId).filter(isHousekeepingReq));
   const [activeTab, setActiveTab] = useState<'TASKS' | 'REQUESTS' | 'ROOMS'>(defaultTab);
-
-  useEffect(() => {
+  const [prevDefaultTab, setPrevDefaultTab] = useState(defaultTab);
+  if (prevDefaultTab !== defaultTab) {
+    setPrevDefaultTab(defaultTab);
     setActiveTab(defaultTab);
-  }, [defaultTab]);
+  }
 
   // Initial Supabase Data Synchronization
   useEffect(() => {

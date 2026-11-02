@@ -581,7 +581,7 @@ describe('STAYNEXA SECURITY & SUPABASE INTEGRATION AUDIT SUITE', () => {
   // ─── 10. AUDIT REMEDIATION: SEC-02 (ROLLBACK SAFETY HALT & PITR RUNBOOK) ───
   describe('Audit Remediation: SEC-02 (Rollback Safety Halt & PITR Runbook)', () => {
     it('should verify rollback_to_20240102.sql has active SQL safety halt preventing insecure execution', () => {
-      const rollbackPath = path.resolve(process.cwd(), 'supabase/migrations/rollback/20240103000000_rollback_to_20240102.sql');
+      const rollbackPath = path.resolve(process.cwd(), 'supabase/rollbacks/20240103000000_rollback_to_20240102.sql');
       const sql = fs.readFileSync(rollbackPath, 'utf-8');
 
       expect(sql).toContain('SAFETY HALT [SEC-02]');
