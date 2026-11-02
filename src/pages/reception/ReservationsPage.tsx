@@ -1,14 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  Calendar, 
   Search, 
   Plus, 
-  Filter, 
-  UserCheck, 
   LogOut, 
   LogIn, 
-  Eye, 
-  X, 
   CheckCircle2
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
@@ -89,8 +84,8 @@ export default function ReservationsPage() {
 
   // New Reservation modal state
   const [isNewResOpen, setIsNewResOpen] = useState(false);
-  const todayStr = new Date().toISOString().split('T')[0];
-  const tomorrowStr = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+  const [todayStr] = useState(() => new Date().toISOString().split('T')[0]);
+  const [tomorrowStr] = useState(() => new Date(Date.now() + 86400000).toISOString().split('T')[0]);
 
   const [newResForm, setNewResForm] = useState({
     guestId: '',

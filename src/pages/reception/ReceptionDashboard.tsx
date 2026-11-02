@@ -2,16 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   BedDouble, 
-  Users, 
   LogIn, 
-  LogOut, 
-  IndianRupee, 
   UtensilsCrossed, 
   BellRing, 
-  Wrench, 
-  CheckCircle2, 
-  Clock, 
-  AlertCircle,
   ArrowRight,
   Sparkles,
   X
@@ -20,7 +13,6 @@ import { useAuth } from '../../contexts/AuthContext';
 import { 
   analyticsService, 
   reservationService, 
-  roomService, 
   serviceRequestService, 
   orderService, 
   hotelService 
@@ -32,10 +24,7 @@ import {
   Card, 
   CardContent, 
   CardHeader, 
-  StatCard, 
   Button, 
-  Badge, 
-  ReservationBadge, 
   OrderBadge, 
   RequestBadge 
 } from '../../components/ui';

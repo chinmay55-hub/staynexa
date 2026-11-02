@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { 
-  Settings, 
   Palette, 
   Wifi, 
   Receipt, 
@@ -9,10 +8,8 @@ import {
   Eye, 
   EyeOff,
   Building2,
-  Sparkles,
   Database,
-  RotateCcw,
-  HardDrive
+  RotateCcw
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { hotelService, resetDemoStore } from '../../services/demoDataService';

@@ -1,19 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  UtensilsCrossed, 
   Plus, 
-  Search, 
   Clock, 
-  Check, 
-  X, 
-  IndianRupee, 
-  Sparkles,
-  Layers,
   ChefHat,
   Edit2,
-  Trash2,
-  Archive,
-  Loader2
+  Trash2
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { 
@@ -24,11 +15,10 @@ import {
 } from '../../services/demoDataService';
 import { isDemoMode, isSupabaseConfigured } from '../../lib/supabase';
 import { realtimeSync } from '../../services/realtimeSync';
-import type { MenuCategory, MenuItem, Order, OrderStatus } from '../../types';
+import type { MenuItem, OrderStatus } from '../../types';
 import { 
   Card, 
   CardContent, 
-  CardHeader, 
   Button, 
   Input, 
   Select, 

@@ -1,21 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  BedDouble, 
   Plus, 
   Search, 
-  Layers, 
   Edit2, 
-  Check, 
-  Sparkles, 
-  Trash2,
-  AlertCircle,
-  Archive,
-  Loader2
+  Archive
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { roomService, demoDataService } from '../../services/demoDataService';
 import { isDemoMode, isSupabaseConfigured } from '../../lib/supabase';
-import type { Room, RoomType, RoomStatus, HousekeepingStatus } from '../../types';
+import type { Room, RoomStatus, HousekeepingStatus } from '../../types';
 import { 
   Card, 
   CardContent, 
@@ -38,13 +31,11 @@ export default function RoomsManagementPage() {
   const [rooms, setRooms] = useState(() => roomService.getAll(hotelId));
   const [roomTypes, setRoomTypes] = useState(() => roomService.getTypes(hotelId));
   const [search, setSearch] = useState('');
-  const [isLoadingData, setIsLoadingData] = useState(false);
 
   // Sync hotel data on mount / hotelId change
   useEffect(() => {
     let isMounted = true;
     async function loadData() {
-      setIsLoadingData(true);
       if (!isDemoMode() && isSupabaseConfigured()) {
         try {
           await demoDataService.syncFromSupabase(hotelId);
@@ -57,7 +48,6 @@ export default function RoomsManagementPage() {
         const freshTypes = roomService.getTypes(hotelId);
         setRooms(freshRooms);
         setRoomTypes(freshTypes);
-        setIsLoadingData(false);
       }
     }
     loadData();
@@ -94,7 +84,7 @@ export default function RoomsManagementPage() {
     if (roomTypes.length > 0 && !newRoomForm.room_type_id) {
       setNewRoomForm(prev => ({ ...prev, room_type_id: roomTypes[0].id }));
     }
-  }, [roomTypes]);
+  }, [roomTypes, newRoomForm.room_type_id]);
 
   // Add Room Type Modal
   const [isAddTypeOpen, setIsAddTypeOpen] = useState(false);

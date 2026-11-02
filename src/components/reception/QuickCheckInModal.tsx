@@ -9,9 +9,7 @@ import {
   ArrowRight, 
   ArrowLeft, 
   Sparkles, 
-  AlertCircle, 
-  IndianRupee,
-  Building2
+  AlertCircle
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { 

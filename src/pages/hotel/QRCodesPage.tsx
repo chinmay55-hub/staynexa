@@ -1,15 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  QrCode, 
   Plus, 
   Download, 
   Printer, 
-  RefreshCw, 
   CheckCircle2, 
   ExternalLink,
   Eye,
   ShieldCheck,
-  Building2,
   Loader2,
   Copy,
   AlertTriangle
@@ -19,8 +16,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import { qrService, roomService, hotelService, demoDataService } from '../../services/demoDataService';
 import { isDemoMode, isSupabaseConfigured } from '../../lib/supabase';
 import { generateGuestPortalUrl } from '../../utils/qrCode';
-import type { QRCode as QRCodeType, Room } from '../../types';
-import { Card, CardContent, CardHeader, Button, Badge, Modal, useToast } from '../../components/ui';
+import type { QRCode as QRCodeType } from '../../types';
+import { Card, CardContent, Button, Modal, useToast } from '../../components/ui';
 
 export default function QRCodesPage() {
   const { user } = useAuth();
@@ -35,7 +32,6 @@ export default function QRCodesPage() {
   const [isPrintSheetOpen, setIsPrintSheetOpen] = useState(false);
   const [bulkQrUrls, setBulkQrUrls] = useState<{ [roomId: string]: string }>({});
 
-  const [isLoading, setIsLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [actionRoomId, setActionRoomId] = useState<string | null>(null);
 
@@ -45,7 +41,6 @@ export default function QRCodesPage() {
   useEffect(() => {
     let isMounted = true;
     async function syncData() {
-      setIsLoading(true);
       if (!isDemoMode() && isSupabaseConfigured()) {
         try {
           await demoDataService.syncFromSupabase(hotelId);
@@ -56,7 +51,6 @@ export default function QRCodesPage() {
       if (isMounted) {
         setRooms([...roomService.getAll(hotelId)]);
         setQrCodes([...qrService.getAll(hotelId)]);
-        setIsLoading(false);
       }
     }
     syncData();
@@ -119,16 +113,6 @@ export default function QRCodesPage() {
       toast.error('Failed to create QR', err?.message || 'Database write error');
     } finally {
       setActionRoomId(null);
-    }
-  };
-
-  const handleDeactivate = async (id: string) => {
-    try {
-      await qrService.deactivateAsync(id);
-      setQrCodes([...qrService.getAll(hotelId)]);
-      toast.success('QR deactivated', 'Room access token revoked');
-    } catch (err: any) {
-      toast.error('Failed to deactivate QR', err?.message || 'Database write error');
     }
   };
 

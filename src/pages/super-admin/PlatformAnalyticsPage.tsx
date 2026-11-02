@@ -11,21 +11,13 @@ import {
   Cell, 
   Legend 
 } from 'recharts';
-import { TrendingUp, Hotel, BedDouble, Users, IndianRupee } from 'lucide-react';
+import { Hotel, BedDouble, Users, IndianRupee } from 'lucide-react';
 import { Card, CardContent, CardHeader, StatCard } from '../../components/ui';
 import { analyticsService, hotelService } from '../../services/demoDataService';
 
 export default function PlatformAnalyticsPage() {
   const [platformStats] = useState(() => analyticsService.getPlatformStats());
   const [hotels] = useState(() => hotelService.getAll());
-
-  // Data for Hotel Statuses
-  const statusData = [
-    { name: 'Active', count: platformStats.active, color: '#10b981' },
-    { name: 'Trial', count: platformStats.trial, color: '#3b82f6' },
-    { name: 'Setup', count: platformStats.setup, color: '#f59e0b' },
-    { name: 'Suspended', count: platformStats.suspended, color: '#ef4444' },
-  ];
 
   // Data for Properties by Size
   const hotelSizeData = hotels.map(h => ({

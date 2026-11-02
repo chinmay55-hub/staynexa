@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { CreditCard, CheckCircle2, Clock, Calendar, AlertCircle } from 'lucide-react';
+import { CheckCircle2, Calendar } from 'lucide-react';
 import { subscriptionService, hotelService } from '../../services/demoDataService';
-import { Card, CardContent, CardHeader, Badge, Button, Select, Modal } from '../../components/ui';
+import { Card, CardContent, CardHeader, Button, Select, Modal } from '../../components/ui';
 import type { SubscriptionPlan, Subscription } from '../../types';
 
 export default function SubscriptionsPage() {

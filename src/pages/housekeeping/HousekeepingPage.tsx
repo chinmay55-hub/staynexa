@@ -2,12 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { 
   Sparkles, 
   CheckCircle2, 
-  Clock, 
-  AlertTriangle, 
   Plus, 
   Play, 
   Wrench, 
-  Search,
   Check,
   Eye
 } from 'lucide-react';
@@ -26,7 +23,6 @@ import type { HousekeepingTask, Room, Priority } from '../../types';
 import { 
   Card, 
   CardContent, 
-  CardHeader, 
   Button, 
   Input, 
   Select, 
@@ -50,7 +46,6 @@ export default function HousekeepingPage({ defaultTab = 'TASKS' }: { defaultTab?
   const [rooms, setRooms] = useState(() => roomService.getAll(hotelId));
   const [guestRequests, setGuestRequests] = useState(() => serviceRequestService.getAll(hotelId).filter(isHousekeepingReq));
   const [activeTab, setActiveTab] = useState<'TASKS' | 'REQUESTS' | 'ROOMS'>(defaultTab);
-  const [search, setSearch] = useState('');
 
   useEffect(() => {
     setActiveTab(defaultTab);
@@ -567,6 +562,9 @@ export default function HousekeepingPage({ defaultTab = 'TASKS' }: { defaultTab?
             value={newTask.notes}
             onChange={e => setNewTask({ ...newTask, notes: e.target.value })}
           />
+          {taskError && (
+            <p role="alert" className="text-sm text-red-700">{taskError}</p>
+          )}
         </form>
       </Modal>
 

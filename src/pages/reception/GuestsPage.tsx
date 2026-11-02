@@ -1,29 +1,18 @@
 import React, { useState } from 'react';
 import { 
-  Users, 
   Search, 
   Plus, 
-  Phone, 
-  Mail, 
-  MapPin, 
-  Star, 
-  CreditCard, 
-  Calendar, 
-  Clock, 
-  FileText,
-  UserCheck
+  Star
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
-import { guestService, reservationService, folioService } from '../../services/demoDataService';
-import type { Guest, Reservation, Folio } from '../../types';
+import { guestService, reservationService } from '../../services/demoDataService';
+import type { Guest } from '../../types';
 import { 
   Card, 
   CardContent, 
-  CardHeader, 
   Button, 
   Input, 
   Select, 
-  Badge, 
   Modal 
 } from '../../components/ui';
 

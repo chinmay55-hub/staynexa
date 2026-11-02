@@ -89,10 +89,8 @@ export function RoomActionConsoleModal({
     idType: 'AADHAAR',
     idNumber: '',
   });
-  const todayStr = new Date().toISOString().split('T')[0];
-  const tomorrowStr = new Date(Date.now() + 86400000).toISOString().split('T')[0];
-  const [checkInDate, setCheckInDate] = useState(todayStr);
-  const [checkOutDate, setCheckOutDate] = useState(tomorrowStr);
+  const [checkInDate, setCheckInDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [checkOutDate, setCheckOutDate] = useState(() => new Date(Date.now() + 86400000).toISOString().split('T')[0]);
   const [adults, setAdults] = useState(2);
   const [childrenCount, setChildrenCount] = useState(0);
   const [ratePerNight, setRatePerNight] = useState<number>(3500);

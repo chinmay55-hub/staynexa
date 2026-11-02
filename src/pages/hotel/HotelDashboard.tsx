@@ -1,16 +1,11 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   Building2, 
   BedDouble, 
   IndianRupee, 
   Users, 
-  UtensilsCrossed, 
-  Wrench, 
   Sparkles, 
-  TrendingUp, 
-  ArrowRight,
-  ShieldCheck,
   QrCode
 } from 'lucide-react';
 import { 
@@ -25,8 +20,6 @@ import { useAuth } from '../../contexts/AuthContext';
 import { 
   hotelService, 
   analyticsService, 
-  reservationService, 
-  roomService,
   activityLogService 
 } from '../../services/demoDataService';
 import { 
@@ -34,8 +27,7 @@ import {
   CardContent, 
   CardHeader, 
   StatCard, 
-  Button, 
-  Badge 
+  Button 
 } from '../../components/ui';
 
 export default function HotelDashboard() {

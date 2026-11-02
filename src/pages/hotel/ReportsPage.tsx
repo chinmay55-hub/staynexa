@@ -14,22 +14,15 @@ import {
   Legend 
 } from 'recharts';
 import { 
-  TrendingUp, 
-  Calendar, 
-  IndianRupee, 
-  BedDouble, 
-  UtensilsCrossed, 
-  Sparkles,
   Download
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
-import { analyticsService, hotelService } from '../../services/demoDataService';
+import { analyticsService } from '../../services/demoDataService';
 import { Card, CardContent, CardHeader, Button, StatCard } from '../../components/ui';
 
 export default function ReportsPage() {
   const { user } = useAuth();
   const hotelId = user?.hotel_id || 'hotel-001';
-  const hotel = hotelService.getById(hotelId);
 
   const [activeTab, setActiveTab] = useState<'OCCUPANCY' | 'REVENUE' | 'HOUSEKEEPING'>('OCCUPANCY');
 

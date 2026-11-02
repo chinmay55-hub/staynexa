@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Hotel, Users, CreditCard, Flag, BarChart3, ScrollText,
   CalendarDays, DoorOpen, UtensilsCrossed, Broom, Wrench, UserCheck, Settings,
   FileBarChart, QrCode, ClipboardList, LayoutGrid, UserCircle2,
-  BellRing, FolderOpen, ChevronLeft, ChevronRight, ShieldAlert, Star,
+  BellRing, FolderOpen, ChevronLeft, ChevronRight, Star,
   Layers, ClipboardCheck,
 } from 'lucide-react';
 import type { UserRole } from '../../types';

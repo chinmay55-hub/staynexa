@@ -1,27 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
-  Building2, 
   Search, 
-  Filter, 
   Plus, 
   MapPin, 
   Phone, 
-  Mail, 
-  Globe, 
-  ExternalLink,
-  Edit2,
-  Check,
-  X,
-  ShieldAlert,
-  SlidersHorizontal
+  Mail
 } from 'lucide-react';
 import { hotelService, subscriptionService, reloadDemoStoreFromStorage } from '../../services/demoDataService';
 import type { Hotel, HotelStatus } from '../../types';
 import { 
   Card, 
   CardContent, 
-  CardHeader, 
   Button, 
   Input, 
   Select, 
@@ -101,7 +91,7 @@ export default function HotelsManagementPage() {
     e.preventDefault();
     if (!newHotelForm.name || !newHotelForm.city) return;
     const slug = newHotelForm.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-    const created = hotelService.create({
+    hotelService.create({
       ...newHotelForm,
       slug,
       status: 'SETUP',
@@ -186,7 +176,6 @@ export default function HotelsManagementPage() {
         {filteredHotels.map(hotel => {
           const sub = subscriptions.find(s => s.hotel_id === hotel.id);
           const branding = hotelService.getBranding(hotel.id);
-          const settings = hotelService.getSettings(hotel.id);
 
           return (
             <Card key={hotel.id} className="hover:shadow-md transition-shadow border-stone-200">

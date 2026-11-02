@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import * as supabaseLib from '../lib/supabase';
@@ -7,8 +7,6 @@ import {
   roomService, 
   reservationService, 
   folioService, 
-  housekeepingService, 
-  maintenanceService,
   qrService, 
   serviceRequestService,
   menuService

@@ -1,22 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { 
   IndianRupee, 
-  Search, 
-  CreditCard, 
   Plus, 
-  FileText, 
   Printer, 
-  CheckCircle2, 
   AlertCircle,
-  Eye,
   Receipt
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { 
   folioService, 
   reservationService, 
-  guestService, 
-  roomService, 
   hotelService,
   activityLogService,
   reloadDemoStoreFromStorage

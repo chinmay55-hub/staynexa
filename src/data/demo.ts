@@ -2,8 +2,8 @@
 // Complete seed data for 3 demo hotels
 import type {
   Hotel, HotelBranding, HotelSettings, RoomType, Room, Guest,
-  Reservation, Folio, FolioItem, Payment, Invoice,
-  MenuCategory, MenuItem, Order, OrderItem,
+  Reservation, Folio, FolioItem, Payment,
+  MenuCategory, MenuItem, Order,
   HotelService, ServiceRequest, HousekeepingTask, MaintenanceTicket,
   Department, Profile, HotelMembership, Notification, QRCode, ActivityLog,
   Subscription

@@ -4,12 +4,8 @@ import {
   Plus, 
   Search, 
   CheckCircle2, 
-  Clock, 
-  AlertTriangle, 
-  User, 
   Check, 
-  Play,
-  Layers
+  Play
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { 
@@ -26,7 +22,6 @@ import type { MaintenanceTicket, MaintenanceStatus, Priority } from '../../types
 import { 
   Card, 
   CardContent, 
-  CardHeader, 
   Button, 
   Input, 
   Select, 
@@ -127,7 +122,7 @@ export default function MaintenancePage() {
   // New Ticket Modal
   const toast = useToast();
   const [isSubmittingTicket, setIsSubmittingTicket] = useState(false);
-  const [ticketError, setTicketError] = useState<string | null>(null);
+  const [, setTicketError] = useState<string | null>(null);
 
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [newTicket, setNewTicket] = useState({

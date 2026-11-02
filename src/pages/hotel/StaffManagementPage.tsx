@@ -1,24 +1,17 @@
 import React, { useState } from 'react';
 import { 
-  Users, 
   Plus, 
   Search, 
-  ShieldCheck, 
-  Mail, 
-  Phone, 
-  Building, 
   CheckCircle2, 
-  XCircle,
   Briefcase
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { staffService } from '../../services/demoDataService';
-import { DEMO_PROFILES, DEMO_MEMBERSHIPS, DEMO_DEPARTMENTS } from '../../data/demo';
+import { DEMO_MEMBERSHIPS } from '../../data/demo';
 import type { Profile, UserRole, Department } from '../../types';
 import { 
   Card, 
   CardContent, 
-  CardHeader, 
   Button, 
   Input, 
   Select, 

@@ -1,6 +1,6 @@
 import React from 'react';
 import clsx from 'clsx';
-import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import { TrendingUp, TrendingDown } from 'lucide-react';
 
 // ─── Card ──────────────────────────────────────────────────────────────────────
 

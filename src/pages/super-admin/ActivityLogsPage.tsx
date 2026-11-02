@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Shield, Clock, Search, Filter, User, Building } from 'lucide-react';
+import { Clock, Search } from 'lucide-react';
 import { Card, CardContent, CardHeader, Input, Select, Badge } from '../../components/ui';
 import { DEMO_ACTIVITY_LOGS, DEMO_HOTELS } from '../../data/demo';
 

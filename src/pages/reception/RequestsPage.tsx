@@ -1,32 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  BellRing, 
   Search, 
-  Plus, 
-  Filter, 
-  CheckCircle2, 
-  Clock, 
-  User, 
-  AlertTriangle,
-  Play,
-  XCircle
+  Plus
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { 
   serviceRequestService, 
   roomService, 
-  guestService, 
   staffService,
   activityLogService,
   reloadDemoStoreFromStorage,
   demoDataService
 } from '../../services/demoDataService';
 import { realtimeSync } from '../../services/realtimeSync';
-import type { ServiceRequest, RequestStatus, Priority } from '../../types';
+import type { RequestStatus, Priority } from '../../types';
 import { 
   Card, 
   CardContent, 
-  CardHeader, 
   Button, 
   Input, 
   Select, 

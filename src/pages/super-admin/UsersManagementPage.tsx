@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Users, Search, Plus, Mail, Phone, Building, ShieldCheck, CheckCircle2, XCircle } from 'lucide-react';
-import { Card, CardContent, CardHeader, Button, Input, Select, Badge, Modal } from '../../components/ui';
+import { Search, Plus, CheckCircle2, XCircle } from 'lucide-react';
+import { Card, CardContent, CardHeader, Button, Input, Select, Modal } from '../../components/ui';
 import { staffService, hotelService, reloadDemoStoreFromStorage } from '../../services/demoDataService';
 import type { Profile, UserRole, Hotel, HotelMembership } from '../../types';
 

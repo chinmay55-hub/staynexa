@@ -1,18 +1,13 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
-  Building2, 
   Hotel as HotelIcon, 
   Users, 
   BedDouble, 
-  TrendingUp, 
-  CreditCard, 
   Plus, 
   ExternalLink,
   ShieldCheck,
-  CheckCircle2,
-  Clock,
-  AlertTriangle
+  CheckCircle2
 } from 'lucide-react';
 import { hotelService, analyticsService, subscriptionService } from '../../services/demoDataService';
 import { Card, CardContent, CardHeader, StatCard, Badge, HotelStatusBadge, Button } from '../../components/ui';

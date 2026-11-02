@@ -6,7 +6,7 @@ import { supabase } from '../lib/supabase';
 import type { 
   Hotel, HotelBranding, HotelSettings, RoomType, Room, Guest, 
   Reservation, Folio, FolioItem, Payment, Order, OrderItem, HousekeepingTask, 
-  MaintenanceTicket, QRCode, Subscription, ServiceRequest, Notification, ActivityLog,
+  MaintenanceTicket, QRCode, ServiceRequest, Notification,
   MenuCategory, MenuItem
 } from '../types';
 
@@ -269,7 +269,7 @@ export const supabaseReservationService = {
 
   async create(data: Omit<Reservation, 'id' | 'created_at' | 'updated_at'>): Promise<Reservation> {
     const client = getClient();
-    const { guest, room, room_type, ...cleanData } = data as any;
+    const { guest: _guest, room: _room, room_type: _roomType, ...cleanData } = data as any;
     const { data: res, error } = await client
       .from('reservations')
       .insert({
@@ -285,7 +285,7 @@ export const supabaseReservationService = {
 
   async update(id: string, updates: Partial<Reservation>): Promise<Reservation> {
     const client = getClient();
-    const { guest, room, room_type, ...cleanUpdates } = updates as any;
+    const { guest: _guest, room: _room, room_type: _roomType, ...cleanUpdates } = updates as any;
     const { data: res, error } = await client
       .from('reservations')
       .update({
@@ -676,7 +676,7 @@ export const supabaseMaintenanceService = {
 
   async create(data: Omit<MaintenanceTicket, 'id' | 'created_at' | 'updated_at'>): Promise<MaintenanceTicket> {
     const client = getClient();
-    const { room, ...cleanData } = data as any;
+    const { room: _room, ...cleanData } = data as any;
     const { data: ticket, error } = await client
       .from('maintenance_tickets')
       .insert({
@@ -692,7 +692,7 @@ export const supabaseMaintenanceService = {
 
   async update(id: string, updates: Partial<MaintenanceTicket>): Promise<MaintenanceTicket> {
     const client = getClient();
-    const { room, ...cleanUpdates } = updates as any;
+    const { room: _room, ...cleanUpdates } = updates as any;
     const { data: ticket, error } = await client
       .from('maintenance_tickets')
       .update({

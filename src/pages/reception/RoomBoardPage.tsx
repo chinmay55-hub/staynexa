@@ -1,17 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  BedDouble, 
-  Search, 
-  Filter, 
-  CheckCircle2, 
-  AlertTriangle, 
-  Clock, 
   Wrench, 
-  Eye, 
-  IndianRupee,
-  Layers,
-  Sparkles,
-  Info
+  Layers
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { 

@@ -1,36 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { 
-  Building2, 
-  Palette, 
-  Settings, 
-  BedDouble, 
-  Layers, 
-  Users, 
-  ShieldCheck, 
-  Sparkles, 
-  UtensilsCrossed, 
-  QrCode, 
   CheckCircle2, 
   Check, 
   ChevronRight, 
-  ChevronLeft, 
-  Plus, 
-  Trash2,
-  AlertCircle
+  ChevronLeft,
+  Sparkles
 } from 'lucide-react';
 import { 
   hotelService, 
   roomService, 
   staffService, 
   qrService, 
-  serviceRequestService,
-  DEMO_HOTELS,
-  DEMO_HOTEL_BRANDING,
-  DEMO_HOTEL_SETTINGS
+  serviceRequestService
 } from '../../services/demoDataService';
-import type { Hotel, RoomType, HotelStatus } from '../../types';
-import { Button, Input, Select, Card, CardContent } from '../../components/ui';
+import type { Hotel, RoomType } from '../../types';
+import { Button, Input, Card, CardContent } from '../../components/ui';
 
 const STEPS = [
   'Hotel Info',
@@ -112,7 +97,7 @@ export default function HotelOnboardingPage() {
     phone: '+91 98290 12345',
   });
 
-  const [services, setServices] = useState([
+  const [services] = useState([
     { name: 'Extra Towels & Linens', category: 'Housekeeping' },
     { name: 'Daily Room Cleaning', category: 'Housekeeping' },
     { name: 'Airport / Station Pickup', category: 'Transport' },

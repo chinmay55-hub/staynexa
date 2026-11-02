@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Sliders, Check, X, Shield, Info, Building } from 'lucide-react';
+import { Info } from 'lucide-react';
 import { Card, CardContent, CardHeader, Button, Select } from '../../components/ui';
 import { hotelService, featureFlagService } from '../../services/demoDataService';
 
