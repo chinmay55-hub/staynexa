@@ -13,6 +13,7 @@ import {
   demoDataService
 } from '../../services/demoDataService';
 import { realtimeSync } from '../../services/realtimeSync';
+import { isSameHotel } from '../../utils/tenantId';
 import type { RequestStatus, Priority } from '../../types';
 import { 
   Card, 
@@ -59,7 +60,7 @@ export default function RequestsPage() {
     const unsubResync = realtimeSync.onResync(() => setRequests([...serviceRequestService.getAll(hotelId)]));
 
     const unsubNewRequest = realtimeSync.subscribe('NEW_SERVICE_REQUEST', ({ request }) => {
-      if (request.hotel_id === hotelId) {
+      if (isSameHotel(request.hotel_id, hotelId)) {
         setRequests(prev => {
           if (prev.some(r => r.id === request.id)) return prev;
           return [request, ...prev];

@@ -49,6 +49,7 @@ interface HotelChannelEntry {
   channel: any;
   refs: number;
   lostConnection: boolean;
+  status?: string;
 }
 
 const SEEN_EVENT_LIMIT = 500;
@@ -81,6 +82,7 @@ class RealtimeSyncService {
   private listeners: Map<RealtimeEventType, Set<EventCallback<any>>> = new Map();
   private hotelChannels: Map<string, HotelChannelEntry> = new Map();
   private seenEvents: Set<string> = new Set();
+  private pendingBroadcastQueue: Array<{ dbHotelId: string; type: RealtimeEventType; payload: any }> = [];
   private isConnectedToSupabase: boolean = false;
   private connectionChangeListeners: Set<(connected: boolean) => void> = new Set();
   private resyncListeners: Set<() => void> = new Set();
@@ -112,7 +114,49 @@ class RealtimeSyncService {
           }
         }
       });
+
+      // Ensure WebSockets recover immediately when mobile screens wake up or network reconnects
+      window.addEventListener('online', () => {
+        console.info('[RealtimeSync] Network online, verifying WebSocket channels...');
+        this.reconnectActiveChannels();
+      });
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          this.reconnectActiveChannels();
+        }
+      });
     }
+  }
+
+  private reconnectActiveChannels(): void {
+    if (!isSupabaseConfigured() || !supabase) return;
+    this.hotelChannels.forEach((entry) => {
+      if (entry.channel && entry.channel.state !== 'joined') {
+        try {
+          entry.channel.subscribe();
+        } catch {}
+      }
+    });
+  }
+
+  private flushPendingBroadcasts(dbHotelId: string, channel: any): void {
+    const remaining: typeof this.pendingBroadcastQueue = [];
+    for (const item of this.pendingBroadcastQueue) {
+      if (item.dbHotelId === dbHotelId) {
+        try {
+          channel.send({
+            type: 'broadcast',
+            event: item.type,
+            payload: item.payload,
+          });
+        } catch (err) {
+          console.warn('[RealtimeSync] Error flushing queued broadcast:', err);
+        }
+      } else {
+        remaining.push(item);
+      }
+    }
+    this.pendingBroadcastQueue = remaining;
   }
 
   private markSeen(identity: string): boolean {
@@ -224,15 +268,29 @@ class RealtimeSyncService {
     }
 
     if (isSupabaseConfigured() && supabase) {
-      this.hotelChannels.forEach((entry) => {
-        try {
-          entry.channel.send({
-            type: 'broadcast',
-            event: type,
-            payload,
-          });
-        } catch (err) {
-          console.warn('[RealtimeSync] WebSocket broadcast send failed:', err);
+      const p = payload as any;
+      const hotelId = p?.order?.hotel_id || p?.request?.hotel_id || p?.task?.hotel_id || p?.notification?.hotel_id || p?.reservation?.hotel_id || p?.room?.hotel_id;
+      if (hotelId) {
+        const dbId = toDbHotelId(hotelId);
+        if (!this.hotelChannels.has(dbId)) {
+          this.openHotelChannel(dbId);
+        }
+      }
+
+      this.hotelChannels.forEach((entry, dbHotelId) => {
+        if (entry.status === 'SUBSCRIBED' || entry.channel?.state === 'joined') {
+          try {
+            entry.channel.send({
+              type: 'broadcast',
+              event: type,
+              payload,
+            });
+          } catch (err) {
+            console.warn('[RealtimeSync] WebSocket broadcast send failed, queuing:', err);
+            this.pendingBroadcastQueue.push({ dbHotelId, type, payload });
+          }
+        } else {
+          this.pendingBroadcastQueue.push({ dbHotelId, type, payload });
         }
       });
     }
@@ -246,7 +304,7 @@ class RealtimeSyncService {
 
   // Shares one channel per hotel between screens; the channel closes when the last screen releases it.
   public connectSupabaseHotelChannel(hotelId: string): () => void {
-    if (!isSupabaseConfigured() || !supabase || !hotelId || typeof hotelId !== 'string') {
+    if (!isSupabaseConfigured() || !supabase || typeof (supabase as any).channel !== 'function' || !hotelId || typeof hotelId !== 'string') {
       return () => {};
     }
 
@@ -267,10 +325,14 @@ class RealtimeSyncService {
   }
 
   private openHotelChannel(dbHotelId: string): void {
-    if (!supabase) return;
+    if (!supabase || typeof (supabase as any).channel !== 'function') return;
 
     const channelKey = `staynexa-hotel-${dbHotelId}`;
-    const channel = supabase.channel(channelKey)
+    const channel = supabase.channel(channelKey, {
+      config: {
+        broadcast: { self: true },
+      },
+    })
       .on(
         'broadcast',
         { event: '*' },
@@ -359,9 +421,12 @@ class RealtimeSyncService {
       .subscribe((status) => {
         const entry = this.hotelChannels.get(dbHotelId);
         if (!entry || entry.channel !== channel) return;
+        entry.status = status;
 
         if (status === 'SUBSCRIBED') {
           this.setConnectionState(true);
+          console.info(`[StayNexa Realtime] Subscribed to live WebSocket updates for hotel: ${dbHotelId}`);
+          this.flushPendingBroadcasts(dbHotelId, channel);
           if (entry.lostConnection) {
             entry.lostConnection = false;
             this.notifyResync();

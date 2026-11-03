@@ -18,6 +18,7 @@ import {
   hotelService 
 } from '../../services/demoDataService';
 import { realtimeSync } from '../../services/realtimeSync';
+import { isSameHotel } from '../../utils/tenantId';
 import type { Reservation } from '../../types';
 import { QuickCheckInModal } from '../../components/reception/QuickCheckInModal';
 import { 
@@ -56,7 +57,7 @@ export default function ReceptionDashboard() {
     };
 
     const unsubNewOrder = realtimeSync.subscribe('NEW_ORDER', ({ order }) => {
-      if (order.hotel_id === hotelId) {
+      if (isSameHotel(order.hotel_id, hotelId)) {
         refreshData();
         const roomNum = order.room?.number || order.room_id || 'Guest Portal';
         setDeskAlert({
@@ -73,7 +74,7 @@ export default function ReceptionDashboard() {
     });
 
     const unsubNewRequest = realtimeSync.subscribe('NEW_SERVICE_REQUEST', ({ request }) => {
-      if (request.hotel_id === hotelId) {
+      if (isSameHotel(request.hotel_id, hotelId)) {
         refreshData();
         const roomNum = request.room?.number || request.room_id || 'Guest Portal';
         setDeskAlert({

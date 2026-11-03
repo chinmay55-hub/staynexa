@@ -38,10 +38,21 @@ export default function HousekeepingPage({ defaultTab = 'TASKS' }: { defaultTab?
   const hotelId = user?.hotel_id || 'hotel-001';
 
   const isHousekeepingReq = (r: any) => {
+    if (!r) return false;
     const cat = (r.service?.category || '').toUpperCase();
+    if (cat.includes('HOUSEKEEPING') || cat.includes('ROOM') || cat.includes('AMENIT')) return true;
+    const sId = r.service_id;
+    if (sId) {
+      const allServices = serviceRequestService.getServices(hotelId);
+      const svc = allServices.find(s => s.id === sId);
+      if (svc && (svc.category || '').toUpperCase().includes('HOUSEKEEPING')) return true;
+    }
     const title = (r.title || '').toLowerCase();
     const desc = (r.description || '').toLowerCase();
-    return cat.includes('HOUSEKEEPING') || title.includes('towel') || title.includes('clean') || title.includes('linen') || title.includes('toilet') || title.includes('water') || desc.includes('towel') || desc.includes('clean');
+    return title.includes('towel') || title.includes('clean') || title.includes('linen') || 
+           title.includes('toilet') || title.includes('water') || title.includes('pillow') ||
+           title.includes('blanket') || title.includes('bed') || title.includes('trash') ||
+           title.includes('iron') || title.includes('kit') || desc.includes('clean') || desc.includes('towel');
   };
 
   const [tasks, setTasks] = useState(() => housekeepingService.getTasks(hotelId));

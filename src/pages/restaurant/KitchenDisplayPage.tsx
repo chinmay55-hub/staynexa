@@ -159,6 +159,7 @@ export default function KitchenDisplayPage() {
     const unsubConnection = realtimeSync.onConnectionChange(setIsRealtimeConnected);
     const disconnectSupabase = realtimeSync.connectSupabaseHotelChannel(hotelId);
 
+    // Subscribed to unified WebSocket channel via realtimeSync
     const unsubNewOrder = realtimeSync.subscribe('NEW_ORDER', ({ order }) => {
       if (isSameHotel(order.hotel_id, hotelId)) {
         setOrders(prev => {
@@ -194,19 +195,7 @@ export default function KitchenDisplayPage() {
     };
   }, [hotelId, fetchDirectKdsOrders]);
 
-  // 3. Infallible Background Interval: Strict 3-Second Database Auto-Polling
-  useEffect(() => {
-    const pollInterval = setInterval(async () => {
-      try {
-        const freshOrders = await fetchDirectKdsOrders();
-        setOrders(freshOrders);
-      } catch (err) {
-        console.warn('[KDS] 3-second polling error:', err);
-      }
-    }, 3000);
-
-    return () => clearInterval(pollInterval);
-  }, [hotelId, fetchDirectKdsOrders]);
+  // 3. Polling interval removed in favor of pure zero-latency WebSocket synchronization
 
   // Auto-dismiss live alert banner after 8 seconds
   useEffect(() => {

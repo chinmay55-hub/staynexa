@@ -18,6 +18,7 @@ import {
   demoDataService
 } from '../../services/demoDataService';
 import { realtimeSync } from '../../services/realtimeSync';
+import { isSameHotel } from '../../utils/tenantId';
 import type { MaintenanceTicket, MaintenanceStatus, Priority } from '../../types';
 import { 
   Card, 
@@ -93,7 +94,7 @@ export default function MaintenancePage() {
     });
 
     const unsubNewReq = realtimeSync.subscribe('NEW_SERVICE_REQUEST', ({ request }) => {
-      if (request.hotel_id === hotelId && isMaintenanceReq(request)) {
+      if (isSameHotel(request.hotel_id, hotelId) && isMaintenanceReq(request)) {
         setGuestRequests(prev => [request, ...prev.filter(r => r.id !== request.id)]);
       }
     });
