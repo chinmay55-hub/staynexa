@@ -22,7 +22,7 @@ import { orderService, hotelService, reloadDemoStoreFromStorage } from '../../se
 import { audioService } from '../../services/audioService';
 import { realtimeSync } from '../../services/realtimeSync';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
-import { toDbHotelId, isSameHotel, isUuid } from '../../utils/tenantId';
+import { toDbHotelId, isSameHotel } from '../../utils/tenantId';
 import type { Order, OrderStatus } from '../../types';
 import { Button } from '../../components/ui';
 
@@ -83,19 +83,8 @@ export default function KitchenDisplayPage() {
     fetchDirectKdsOrders().then(fresh => setOrders(fresh));
   };
 
-  const handleResetKdsOrders = () => {
-    if (typeof window !== 'undefined' && window.localStorage) {
-      try {
-        const hotelKey = `staynexa_cleared_orders_${hotelId}`;
-        const allIds = orders.map(o => o.id);
-        localStorage.setItem(hotelKey, JSON.stringify(allIds));
-      } catch {}
-    }
-    setOrders([]);
-  };
-
   // Direct database fetch helper
-    const getClearedOrderIds = useCallback((): Set<string> => {
+  const getClearedOrderIds = useCallback((): Set<string> => {
     if (typeof window === 'undefined' || !window.localStorage) return new Set();
     try {
       const stored = JSON.parse(localStorage.getItem(`staynexa_cleared_orders_${hotelId}`) || '[]');
@@ -152,7 +141,7 @@ export default function KitchenDisplayPage() {
     }
 
     return baseOrders;
-  }, [hotelId]);
+  }, [hotelId, getClearedOrderIds]);
 
   // 1. Direct KDS Database Query on Mount (status != 'completed')
   useEffect(() => {
@@ -167,70 +156,9 @@ export default function KitchenDisplayPage() {
 
   // 2. Realtime WebSocket Listeners (Supabase Postgres Changes on schema: 'public', table: 'orders')
   useEffect(() => {
+    const unsubConnection = realtimeSync.onConnectionChange(setIsRealtimeConnected);
     const disconnectSupabase = realtimeSync.connectSupabaseHotelChannel(hotelId);
 
-    // Direct Postgres Realtime Subscription for public.orders
-    let ordersSubscription: any = null;
-    if (isSupabaseConfigured() && supabase) {
-      const dbHotelId = toDbHotelId(hotelId);
-      ordersSubscription = supabase
-        .channel(`kds-public-orders-${hotelId}`)
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'orders',
-            filter: `hotel_id=eq.${dbHotelId}`,
-          },
-          (payload) => {
-            console.log('[KDS Realtime postgres_changes]', payload.eventType, payload.new);
-            if (payload.eventType === 'INSERT' && payload.new) {
-              const raw = payload.new as any;
-              if (isSameHotel(raw.hotel_id, hotelId)) {
-                // Fetch full order with items immediately to populate order items in realtime
-                fetchDirectKdsOrders().then(fresh => {
-                  if (fresh && fresh.length > 0) {
-                    setOrders(fresh);
-                    audioService.playChime();
-                    const newest = fresh.find(f => f.id === raw.id) || fresh[0];
-                    const roomNum = (newest as any).room_number || newest.room?.number || 'Portal';
-                    setLiveAlertBanner({
-                      id: newest.id,
-                      message: `🔔 New Order #${newest.id.slice(-6).toUpperCase()} from Room ${roomNum}`,
-                    });
-                  }
-                });
-              }
-            } else if (payload.eventType === 'UPDATE' && payload.new) {
-              const raw = payload.new as any;
-              if (isSameHotel(raw.hotel_id, hotelId)) {
-                const upStatus = (raw.status || '').toUpperCase();
-                if (upStatus === 'DELIVERED' || upStatus === 'CANCELLED') {
-                  setOrders(prev => prev.filter(o => o.id !== raw.id));
-                } else {
-                  setOrders(prev => prev.map(o => (o.id === raw.id ? { 
-                    ...o, 
-                    ...raw, 
-                    status: upStatus as OrderStatus,
-                    items: (raw.items && Array.isArray(raw.items) && raw.items.length > 0) ? raw.items : o.items,
-                  } : o)));
-                }
-              }
-            } else if (payload.eventType === 'DELETE' && payload.old) {
-              const oldId = (payload.old as any).id;
-              setOrders(prev => prev.filter(o => o.id !== oldId));
-            }
-          }
-        )
-        .subscribe((status) => {
-          if (status === 'SUBSCRIBED') {
-            setIsRealtimeConnected(true);
-          }
-        });
-    }
-
-    // Local / In-process BroadcastChannel Subscription
     const unsubNewOrder = realtimeSync.subscribe('NEW_ORDER', ({ order }) => {
       if (isSameHotel(order.hotel_id, hotelId)) {
         setOrders(prev => {
@@ -259,10 +187,8 @@ export default function KitchenDisplayPage() {
     });
 
     return () => {
+      unsubConnection();
       disconnectSupabase();
-      if (ordersSubscription && supabase) {
-        supabase.removeChannel(ordersSubscription);
-      }
       unsubNewOrder();
       unsubOrderStatus();
     };
@@ -273,33 +199,7 @@ export default function KitchenDisplayPage() {
     const pollInterval = setInterval(async () => {
       try {
         const freshOrders = await fetchDirectKdsOrders();
-
-        // Compare and alert on new PENDING orders
-        setOrders(prevOrders => {
-          const prevMap = new Map(prevOrders.map(o => [o.id, o]));
-          let foundNewPending = false;
-          let newestPendingOrder: Order | null = null;
-
-          freshOrders.forEach(fo => {
-            const existing = prevMap.get(fo.id);
-            const isPending = (fo.status || '').toUpperCase() === 'PENDING';
-            if (!existing && isPending) {
-              foundNewPending = true;
-              newestPendingOrder = fo;
-            }
-          });
-
-          if (foundNewPending && newestPendingOrder) {
-            audioService.playChime();
-            const roomNum = (newestPendingOrder as any).room_number || (newestPendingOrder as Order).room?.number || (newestPendingOrder as Order).room_id || 'Portal';
-            setLiveAlertBanner({
-              id: (newestPendingOrder as Order).id,
-              message: `🔔 New Order #${(newestPendingOrder as Order).id.slice(-6).toUpperCase()} from Room ${roomNum}`,
-            });
-          }
-
-          return freshOrders;
-        });
+        setOrders(freshOrders);
       } catch (err) {
         console.warn('[KDS] 3-second polling error:', err);
       }

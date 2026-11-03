@@ -2,7 +2,7 @@
 // Bridges Supabase Realtime WebSockets, BroadcastChannel, and Cross-Tab Storage Events
 // Guarantees cross-device and instant synchronization between Guest Portal, KDS, Reception, and Housekeeping
 
-import { supabase, isDemoMode, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { toDbHotelId } from '../utils/tenantId';
 import type { Order, ServiceRequest, HousekeepingTask, Notification, ActivityLog, Reservation, Room, Folio, MaintenanceTicket, MenuItem, MenuCategory } from '../types';
 
@@ -45,26 +45,33 @@ export interface RealtimePayloadMap {
 
 type EventCallback<T extends RealtimeEventType> = (payload: RealtimePayloadMap[T]) => void;
 
+const SEEN_EVENT_LIMIT = 500;
+
+// Same entity + status yields the same identity no matter which path delivered it
+// (local action, BroadcastChannel, storage, Supabase broadcast, or Postgres change).
+function eventIdentity(type: string, payload: any): string {
+  const p = payload || {};
+  const entity = p.order || p.request || p.task || p.ticket || p.notification || p.reservation || p.room || p.folio || p.log;
+  const id = p.orderId ?? p.requestId ?? p.taskId ?? p.ticketId ?? entity?.id ?? p.id;
+  const status = p.status ?? entity?.status ?? '';
+  return id === undefined ? `${type}:${JSON.stringify(payload)}` : `${type}:${id}:${status}`;
+}
+
 class RealtimeSyncService {
   private broadcastChannel: BroadcastChannel | null = null;
   private listeners: Map<RealtimeEventType, Set<EventCallback<any>>> = new Map();
   private activeSupabaseChannels: Map<string, any> = new Map();
-  private lastProcessedEventTimestamps: Set<string> = new Set();
+  private seenEvents: Set<string> = new Set();
   private isConnectedToSupabase: boolean = false;
   private connectionChangeListeners: Set<(connected: boolean) => void> = new Set();
 
   constructor() {
-    // 1. Initialize BroadcastChannel for modern browser tabs
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
       try {
         this.broadcastChannel = new BroadcastChannel('staynexa_realtime_bus');
         this.broadcastChannel.onmessage = (event) => {
           if (event.data && event.data.type && event.data.payload) {
-            const eventKey = `${event.data.type}-${JSON.stringify(event.data.payload).slice(0, 40)}`;
-            if (!this.lastProcessedEventTimestamps.has(eventKey)) {
-              this.markProcessed(eventKey);
-              this.dispatchLocal(event.data.type as RealtimeEventType, event.data.payload);
-            }
+            this.receive(event.data.type as RealtimeEventType, event.data.payload);
           }
         };
       } catch (err) {
@@ -72,18 +79,13 @@ class RealtimeSyncService {
       }
     }
 
-    // 2. Initialize Cross-Tab Storage Event listener (works across all browsers and window contexts)
     if (typeof window !== 'undefined') {
       window.addEventListener('storage', (event) => {
         if (event.key === 'staynexa_global_sync' && event.newValue) {
           try {
             const data = JSON.parse(event.newValue);
             if (data && data.type && data.payload) {
-              const eventKey = `${data.type}-${JSON.stringify(data.payload).slice(0, 40)}`;
-              if (!this.lastProcessedEventTimestamps.has(eventKey)) {
-                this.markProcessed(eventKey);
-                this.dispatchLocal(data.type as RealtimeEventType, data.payload);
-              }
+              this.receive(data.type as RealtimeEventType, data.payload);
             }
           } catch (e) {
             console.warn('[RealtimeSync] Error parsing storage sync event:', e);
@@ -92,20 +94,20 @@ class RealtimeSyncService {
       });
     }
 
-    // 3. Initialize Cross-Device Supabase Realtime Channels
     this.initSupabaseChannels();
   }
 
-  private markProcessed(key: string): void {
-    this.lastProcessedEventTimestamps.add(key);
-    if (this.lastProcessedEventTimestamps.size > 200) {
-      // Purge oldest entries
-      const iter = this.lastProcessedEventTimestamps.values();
-      for (let i = 0; i < 50; i++) {
+  private markSeen(identity: string): boolean {
+    if (this.seenEvents.has(identity)) return false;
+    this.seenEvents.add(identity);
+    if (this.seenEvents.size > SEEN_EVENT_LIMIT) {
+      const iter = this.seenEvents.values();
+      for (let i = 0; i < SEEN_EVENT_LIMIT / 2; i++) {
         const item = iter.next();
-        if (!item.done) this.lastProcessedEventTimestamps.delete(item.value);
+        if (!item.done) this.seenEvents.delete(item.value);
       }
     }
+    return true;
   }
 
   public isSupabaseConnected(): boolean {
@@ -136,15 +138,9 @@ class RealtimeSyncService {
   private initSupabaseChannels(): void {
     if (typeof window === 'undefined' || !isSupabaseConfigured() || !supabase) {
       this.setConnectionState(false);
-      return;
     }
-
-    // Connected mode active: channel subscriptions are strictly hotel-scoped
-    // to prevent cross-tenant data leakage over unauthenticated channels.
-    this.setConnectionState(true);
   }
 
-  // Subscribe to a realtime event in the local React app
   public subscribe<T extends RealtimeEventType>(type: T, callback: EventCallback<T>): () => void {
     if (!this.listeners.has(type)) {
       this.listeners.set(type, new Set());
@@ -159,7 +155,6 @@ class RealtimeSyncService {
     };
   }
 
-  // Dispatch an event locally to in-component listeners
   private dispatchLocal<T extends RealtimeEventType>(type: T, payload: RealtimePayloadMap[T]): void {
     const set = this.listeners.get(type);
     if (set) {
@@ -173,15 +168,11 @@ class RealtimeSyncService {
     }
   }
 
-  // Emit an event across all local listeners, tabs, and remote WebSocket channels
+  // Applies an event originating from this device's own action; relays it to other tabs and devices.
   public emit<T extends RealtimeEventType>(type: T, payload: RealtimePayloadMap[T]): void {
-    const eventKey = `${type}-${JSON.stringify(payload).slice(0, 40)}`;
-    this.markProcessed(eventKey);
-
-    // 1. Dispatch to local subscribers in current window
+    this.markSeen(eventIdentity(type, payload));
     this.dispatchLocal(type, payload);
 
-    // 2. Broadcast across browser tabs via BroadcastChannel
     if (this.broadcastChannel) {
       try {
         this.broadcastChannel.postMessage({ type, payload });
@@ -190,7 +181,6 @@ class RealtimeSyncService {
       }
     }
 
-    // 3. Trigger cross-tab LocalStorage event (supported in all browsers/contexts)
     if (typeof window !== 'undefined' && window.localStorage) {
       try {
         localStorage.setItem('staynexa_global_sync', JSON.stringify({
@@ -203,7 +193,6 @@ class RealtimeSyncService {
       }
     }
 
-    // 4. Remote WebSocket broadcast relay to all other devices/browsers connected to Supabase
     if (isSupabaseConfigured() && supabase && this.activeSupabaseChannels.size > 0) {
       const sentChannels = new Set<any>();
       this.activeSupabaseChannels.forEach((channel) => {
@@ -223,7 +212,12 @@ class RealtimeSyncService {
     }
   }
 
-  // Connect to Supabase Realtime WebSocket channel for a hotel
+  // Applies an event that arrived from another source; skipped if this device already applied it.
+  private receive(type: RealtimeEventType, payload: any): void {
+    if (!this.markSeen(eventIdentity(type, payload))) return;
+    this.dispatchLocal(type, payload);
+  }
+
   public connectSupabaseHotelChannel(hotelId: string): () => void {
     if (!isSupabaseConfigured() || !supabase || !hotelId || typeof hotelId !== 'string') {
       return () => {};
@@ -243,11 +237,7 @@ class RealtimeSyncService {
           { event: '*' },
           (event: { event?: string; payload?: any }) => {
             if (event.event && event.payload) {
-              const eventKey = `remote-${event.event}-${JSON.stringify(event.payload).slice(0, 40)}`;
-              if (!this.lastProcessedEventTimestamps.has(eventKey)) {
-                this.markProcessed(eventKey);
-                this.dispatchLocal(event.event as RealtimeEventType, event.payload);
-              }
+              this.receive(event.event as RealtimeEventType, event.payload);
             }
           }
         )
@@ -264,9 +254,9 @@ class RealtimeSyncService {
             };
 
             if (payload.eventType === 'INSERT') {
-              this.emit('NEW_ORDER', { order: safeOrder });
+              this.receive('NEW_ORDER', { order: safeOrder });
             } else if (payload.eventType === 'UPDATE') {
-              this.emit('ORDER_STATUS_CHANGED', {
+              this.receive('ORDER_STATUS_CHANGED', {
                 orderId: rawOrder.id,
                 status: rawOrder.status,
                 order: safeOrder,
@@ -282,9 +272,9 @@ class RealtimeSyncService {
             if (!rawReq) return;
 
             if (payload.eventType === 'INSERT') {
-              this.emit('NEW_SERVICE_REQUEST', { request: rawReq });
+              this.receive('NEW_SERVICE_REQUEST', { request: rawReq });
             } else if (payload.eventType === 'UPDATE') {
-              this.emit('REQUEST_STATUS_CHANGED', {
+              this.receive('REQUEST_STATUS_CHANGED', {
                 requestId: rawReq.id,
                 status: rawReq.status,
                 request: rawReq,
@@ -297,9 +287,9 @@ class RealtimeSyncService {
           { event: '*', schema: 'public', table: 'housekeeping_tasks', filter: `hotel_id=eq.${dbHotelId}` },
           (payload) => {
             if (payload.eventType === 'INSERT') {
-              this.emit('NEW_HOUSEKEEPING_TASK', { task: payload.new as HousekeepingTask });
+              this.receive('NEW_HOUSEKEEPING_TASK', { task: payload.new as HousekeepingTask });
             } else if (payload.eventType === 'UPDATE') {
-              this.emit('HOUSEKEEPING_TASK_UPDATED', {
+              this.receive('HOUSEKEEPING_TASK_UPDATED', {
                 taskId: payload.new.id,
                 task: payload.new as HousekeepingTask,
               });
@@ -310,13 +300,14 @@ class RealtimeSyncService {
           'postgres_changes',
           { event: 'INSERT', schema: 'public', table: 'notifications', filter: `hotel_id=eq.${dbHotelId}` },
           (payload) => {
-            this.emit('NEW_NOTIFICATION', { notification: payload.new as Notification });
+            this.receive('NEW_NOTIFICATION', { notification: payload.new as Notification });
           }
         )
         .subscribe((status) => {
           if (status === 'SUBSCRIBED') {
             this.setConnectionState(true);
-            console.info(`[StayNexa Realtime] Subscribed to live WebSocket updates for hotel: ${hotelId} (channel: ${channelKey})`);
+          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+            this.setConnectionState(false);
           }
         });
 

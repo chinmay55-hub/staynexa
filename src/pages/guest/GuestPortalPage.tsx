@@ -379,6 +379,7 @@ export default function GuestPortalPage() {
 
     return () => {
       window.removeEventListener('storage', handleStorage);
+      disconnectSupabase();
       unsubOrderStatus();
       unsubRequestStatus();
     };

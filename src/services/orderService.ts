@@ -3,7 +3,6 @@
 
 import { supabase, isSupabaseConfigured, isDemoMode } from '../lib/supabase';
 import { realtimeSync } from './realtimeSync';
-import { isUuid, toDbUuid } from '../utils/tenantId';
 import type { Order, OrderItem, OrderStatus } from '../types';
 
 function generateId(): string {
