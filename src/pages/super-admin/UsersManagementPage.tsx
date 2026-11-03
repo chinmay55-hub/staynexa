@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Search, Plus, CheckCircle2, XCircle, Edit2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, Button, Input, Select, Modal } from '../../components/ui';
 import { staffService, hotelService, reloadDemoStoreFromStorage } from '../../services/demoDataService';
+import { supabase, isDemoMode } from '../../lib/supabase';
 import type { Profile, UserRole, Hotel, HotelMembership } from '../../types';
 
 export default function UsersManagementPage() {
@@ -114,7 +115,7 @@ export default function UsersManagementPage() {
       role: newUser.role,
       is_active: true,
     });
-        if (newUser.role !== 'SUPER_ADMIN' && newUser.hotel_id) {
+    if (newUser.role !== 'SUPER_ADMIN' && newUser.hotel_id) {
       staffService.createMembership({
         hotel_id: newUser.hotel_id,
         user_id: createdProfile.user_id,
@@ -123,6 +124,44 @@ export default function UsersManagementPage() {
       });
     }
 
+    if (!isDemoMode() && supabase && newUser.password) {
+      try {
+        const { data: authData, error: authErr } = await supabase.auth.signUp({
+          email: newUser.email.trim(),
+          password: newUser.password,
+          options: {
+            data: {
+              full_name: newUser.full_name,
+              role: newUser.role,
+            }
+          }
+        });
+        if (authErr) {
+          console.warn('[Supabase Auth] Provisioning user notice:', authErr.message);
+        } else if (authData?.user) {
+          const uid = authData.user.id;
+          await supabase.from('profiles').upsert({
+            id: uid,
+            email: newUser.email.trim(),
+            full_name: newUser.full_name,
+            phone: newUser.phone || null,
+            role: newUser.role,
+            is_active: true,
+            updated_at: new Date().toISOString(),
+          });
+          if (newUser.role !== 'SUPER_ADMIN' && newUser.hotel_id) {
+            await supabase.from('hotel_memberships').upsert({
+              user_id: uid,
+              hotel_id: newUser.hotel_id,
+              role: newUser.role,
+              is_active: true,
+            }, { onConflict: 'user_id,hotel_id' });
+          }
+        }
+      } catch (err) {
+        console.warn('[Supabase Auth] Provisioning unexpected error:', err);
+      }
+    }
 
     setUsers([...staffService.getAllProfiles()]);
     setMemberships([...staffService.getAllMemberships()]);
@@ -325,6 +364,14 @@ export default function UsersManagementPage() {
             placeholder="+91 98765 43210"
             value={newUser.phone}
             onChange={e => setNewUser({ ...newUser, phone: e.target.value })}
+          />
+          <Input
+            label="Initial Password"
+            type="password"
+            required
+            placeholder="Min 6 characters"
+            value={newUser.password}
+            onChange={e => setNewUser({ ...newUser, password: e.target.value })}
           />
           <Select
             label="Role"

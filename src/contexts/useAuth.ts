@@ -8,6 +8,8 @@ export interface AuthContextType {
   signIn: (email: string, password: string) => Promise<{ error?: string }>;
   signOut: () => Promise<void>;
   switchHotel: (hotelId: string) => void;
+  resetPassword: (email: string) => Promise<{ error?: string; message?: string }>;
+  updatePassword: (newPassword: string) => Promise<{ error?: string; message?: string }>;
 }
 
 export const AuthContext = createContext<AuthContextType | null>(null);

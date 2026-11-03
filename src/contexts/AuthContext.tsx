@@ -171,8 +171,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [isDemo]);
 
     const signIn = useCallback(async (email: string, password: string): Promise<{ error?: string }> => {
-    const normalizedEmail = email.toLowerCase().trim();
-
     // ─── 1. PRODUCTION SUPABASE AUTH ─────────────────────────────────────────────────────────────────────────────────
     if (!isDemo && supabase) {
       const { data, error } = await supabase.auth.signInWithPassword({
@@ -181,12 +179,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
 
       if (error || !data?.user) {
-        const demoCred = DEMO_CREDENTIALS[normalizedEmail];
-        if (demoCred && demoCred.password === password) {
-          console.warn('[StayNexa Auth] Supabase auth rejected, falling back to verified demo credential');
-        } else {
-          return { error: error?.message || 'Authentication failed. Please verify credentials.' };
-        }
+        return { error: error?.message || 'Authentication failed. Please verify credentials.' };
       }
 
       if (data?.user) {
@@ -335,8 +328,45 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [user, isDemo]);
 
+  const resetPassword = useCallback(async (email: string): Promise<{ error?: string; message?: string }> => {
+    const normalizedEmail = email.toLowerCase().trim();
+    if (!normalizedEmail) return { error: 'Please enter a valid email address.' };
+
+    if (!isDemo && supabase) {
+      try {
+        const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
+          redirectTo: typeof window !== 'undefined' ? `${window.location.origin}/reset-password` : undefined,
+        });
+        if (error) return { error: error.message };
+        return { message: 'Password reset instructions have been dispatched to your email address.' };
+      } catch (err) {
+        return { error: err instanceof Error ? err.message : 'Failed to request password reset.' };
+      }
+    }
+
+    return { message: `Demo mode: Password reset email dispatched to ${normalizedEmail}.` };
+  }, [isDemo]);
+
+  const updatePassword = useCallback(async (newPassword: string): Promise<{ error?: string; message?: string }> => {
+    if (!newPassword || newPassword.length < 6) {
+      return { error: 'Password must be at least 6 characters long.' };
+    }
+
+    if (!isDemo && supabase) {
+      try {
+        const { error } = await supabase.auth.updateUser({ password: newPassword });
+        if (error) return { error: error.message };
+        return { message: 'Password updated successfully. You can now sign in.' };
+      } catch (err) {
+        return { error: err instanceof Error ? err.message : 'Failed to update password.' };
+      }
+    }
+
+    return { message: 'Password updated successfully.' };
+  }, [isDemo]);
+
   return (
-    <AuthContext.Provider value={{ user, isLoading, isDemo, signIn, signOut, switchHotel }}>
+    <AuthContext.Provider value={{ user, isLoading, isDemo, signIn, signOut, switchHotel, resetPassword, updatePassword }}>
       {children}
     </AuthContext.Provider>
   );

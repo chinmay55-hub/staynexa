@@ -16,13 +16,35 @@ const DEMO_LOGINS = [
 ];
 
 export default function LoginPage() {
-  const { signIn, user, signOut, isDemo } = useAuth();
+  const { signIn, user, signOut, isDemo, resetPassword } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [isResetOpen, setIsResetOpen] = useState(false);
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetMessage, setResetMessage] = useState('');
+  const [resetError, setResetError] = useState('');
+  const [isResetting, setIsResetting] = useState(false);
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setResetMessage('');
+    setResetError('');
+    setIsResetting(true);
+    try {
+      const res = await resetPassword(resetEmail || email);
+      if (res.error) {
+        setResetError(res.error);
+      } else {
+        setResetMessage(res.message || 'Password reset instructions have been sent.');
+      }
+    } finally {
+      setIsResetting(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -184,7 +206,16 @@ export default function LoginPage() {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-[#4f4d4a] mb-1.5">Password</label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-sm font-medium text-[#4f4d4a]">Password</label>
+                <button
+                  type="button"
+                  onClick={() => { setIsResetOpen(true); setResetEmail(email); setResetMessage(''); setResetError(''); }}
+                  className="text-xs text-[#c9a84c] hover:underline font-medium cursor-pointer"
+                >
+                  Forgot password?
+                </button>
+              </div>
               <div className="relative">
                 <input
                   type={showPassword ? 'text' : 'password'}
@@ -241,6 +272,68 @@ export default function LoginPage() {
               </button>
             ))}
           </div>
+          {/* Password Reset Modal */}
+          {isResetOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+              <div className="bg-white rounded-2xl max-w-sm w-full p-6 space-y-4 shadow-xl border border-stone-200">
+                <div className="flex justify-between items-center">
+                  <h3 className="font-bold text-stone-900 text-lg">Reset Password</h3>
+                  <button
+                    type="button"
+                    onClick={() => setIsResetOpen(false)}
+                    className="text-stone-400 hover:text-stone-600 text-lg font-bold"
+                  >
+                    &times;
+                  </button>
+                </div>
+                <p className="text-xs text-stone-500">
+                  Enter your account email to receive secure password recovery instructions.
+                </p>
+                {resetMessage ? (
+                  <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-800 text-xs">
+                    <p className="font-semibold mb-2">{resetMessage}</p>
+                    <button
+                      type="button"
+                      onClick={() => setIsResetOpen(false)}
+                      className="w-full py-2 bg-emerald-600 text-white rounded-lg font-semibold text-xs"
+                    >
+                      Close
+                    </button>
+                  </div>
+                ) : (
+                  <form onSubmit={handleResetPassword} className="space-y-3">
+                    <input
+                      type="email"
+                      value={resetEmail}
+                      onChange={e => setResetEmail(e.target.value)}
+                      placeholder="name@example.com"
+                      required
+                      className="w-full px-3 py-2 border border-stone-300 rounded-lg text-xs focus:ring-1 focus:ring-[#c9a84c] focus:outline-none"
+                    />
+                    {resetError && (
+                      <p className="text-xs text-red-600 font-medium">{resetError}</p>
+                    )}
+                    <div className="flex justify-end gap-2 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => setIsResetOpen(false)}
+                        className="px-3 py-1.5 border border-stone-200 text-stone-600 rounded-lg text-xs font-semibold"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={isResetting}
+                        className="px-3 py-1.5 bg-[#1a2744] text-white rounded-lg text-xs font-semibold hover:bg-[#243561] disabled:opacity-50"
+                      >
+                        {isResetting ? 'Sending...' : 'Send Instructions'}
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

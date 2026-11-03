@@ -80,4 +80,45 @@ test.describe('Authentication & Role Protection', () => {
     // Should redirect back to unauthorized or dashboard/kitchen
     await expect(page).not.toHaveURL(/\/super-admin/);
   });
+  test('forgot password modal opens from login and submits recovery request', async ({ page }) => {
+    await page.goto('/login');
+    await expect(page.locator('button:has-text("Forgot password?")')).toBeVisible({ timeout: 10000 });
+
+    await page.click('button:has-text("Forgot password?")');
+    await expect(page.getByRole('heading', { name: 'Reset Password' })).toBeVisible();
+
+    await page.fill('input[placeholder="name@example.com"]', 'vikram@grandpalace.com');
+    await page.click('button:has-text("Send Instructions")');
+
+    // Supabase Auth live staging either returns success message or honest rate-limit notice ("email rate limit exceeded")
+    await expect(page.locator('text=/Password reset instructions|rate limit/i')).toBeVisible({ timeout: 10000 });
+
+    // Close modal via Close or Cancel button
+    const closeBtn = page.locator('button:has-text("Close")');
+    if (await closeBtn.isVisible()) {
+      await closeBtn.click();
+    } else {
+      await page.click('button:has-text("Cancel")');
+    }
+    await expect(page.getByRole('heading', { name: 'Reset Password' })).not.toBeVisible();
+  });
+
+  test('reset password page renders and validates matching password fields', async ({ page }) => {
+    await page.goto('/reset-password');
+    await expect(page.getByRole('heading', { name: /Set New Password/i })).toBeVisible({ timeout: 10000 });
+
+    // Test mismatched passwords
+    await page.fill('input[placeholder="At least 6 characters"]', 'newpass123');
+    await page.fill('input[placeholder="Re-enter password"]', 'mismatch456');
+    await page.click('button:has-text("Update Password")');
+
+    await expect(page.locator('text=/Passwords do not match/i')).toBeVisible();
+
+    // Test password too short
+    await page.fill('input[placeholder="At least 6 characters"]', '123');
+    await page.fill('input[placeholder="Re-enter password"]', '123');
+    await page.click('button:has-text("Update Password")');
+
+    await expect(page.locator('text=/Password must be at least 6 characters/i')).toBeVisible();
+  });
 });

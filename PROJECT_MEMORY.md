@@ -29,8 +29,12 @@ StayNexa is a modern, multi-tenant Hotel Operations System with integrated Guest
 - **KDS Order Lifecycle**: KDS operates on real-time WebSocket events (`NEW_ORDER`, `ORDER_STATUS_CHANGED`). Orders advance through `PENDING` -> `ACCEPTED` -> `PREPARING` -> `READY` -> `DELIVERED`. Delivered and cancelled tickets clear from active queues without polling interference.
 
 ## Authentication & Credential Storage
-- **Production Mode**: Managed via Supabase Auth (`supabase.auth.signInWithPassword`, `supabase.auth.signUp`).
-- **No Plaintext Storage**: Custom and demo credentials use salted SHA-256 cryptographic hashing (`src/utils/cryptoAuth.ts`). Plaintext passwords are strictly forbidden in `localStorage`, sessionStorage, or custom credential stores.
+- **Production Mode**: Managed strictly via Supabase Auth (`supabase.auth.signInWithPassword`, `supabase.auth.signUp`, `supabase.auth.resetPasswordForEmail`, `supabase.auth.updateUser`).
+- **Cryptographic Standards**: `src/utils/cryptoAuth.ts` implements OWASP-standard PBKDF2-HMAC-SHA512 (100,000 iterations, 16-byte cryptographically secure random salt) with constant-time equality checks.
+- **Zero Browser Credential Storage**: All custom credential stores (`staynexa_custom_credentials`) in `localStorage` have been permanently abolished and purged on startup.
+- **Direct Auth Provisioning**: New hotel administrators created during onboarding (`HotelOnboardingPage.tsx`) and staff created by super-admins (`UsersManagementPage.tsx`) are provisioned directly into Supabase Auth with associated `profiles` and `hotel_memberships` records.
+- **Password Reset Architecture**: Fully integrated via `/reset-password` route, "Forgot password?" modal on `/login`, and Supabase password recovery pipeline.
+- **Zero Mock Fallback in Production**: When configured with live Supabase credentials (`!isDemoMode() && supabase`), authentication rejections and database mutation errors fail honestly and never fall back to mock data or demo credentials.
 
 ## Edge & Transport Security (Cloudflare & Vercel)
 - **Headers in `vercel.json`**:

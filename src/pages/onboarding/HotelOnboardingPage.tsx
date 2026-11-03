@@ -21,6 +21,7 @@ import {
 import type { Hotel, RoomType } from '../../types';
 import { Button, Input, Card, CardContent } from '../../components/ui';
 import { realtimeSync } from '../../services/realtimeSync';
+import { supabase, isDemoMode } from '../../lib/supabase';
 
 const STEPS = [
   'Hotel Info',
@@ -460,6 +461,44 @@ export default function HotelOnboardingPage() {
           user_id: adminProfile.user_id,
           role: 'HOTEL_ADMIN',
           is_active: true,
+        });
+      }
+
+      // Provision in Supabase Auth if connected
+      if (!isDemoMode() && supabase && adminUser.password) {
+        const client = supabase;
+        client.auth.signUp({
+          email: adminUser.email.trim(),
+          password: adminUser.password,
+          options: {
+            data: {
+              full_name: adminUser.full_name || 'Hotel Admin',
+              role: 'HOTEL_ADMIN',
+            }
+          }
+        }).then(async ({ data: authData, error: authErr }) => {
+          if (authErr) {
+            console.warn('[Supabase Auth Provisioning] Notice:', authErr.message);
+          } else if (authData?.user) {
+            const uid = authData.user.id;
+            await client.from('profiles').upsert({
+              id: uid,
+              email: adminUser.email.trim(),
+              full_name: adminUser.full_name || 'Hotel Admin',
+              phone: adminUser.phone || null,
+              role: 'HOTEL_ADMIN',
+              is_active: true,
+              updated_at: new Date().toISOString(),
+            });
+            await client.from('hotel_memberships').upsert({
+              user_id: uid,
+              hotel_id: targetHotelId!,
+              role: 'HOTEL_ADMIN',
+              is_active: true,
+            }, { onConflict: 'user_id,hotel_id' });
+          }
+        }).catch(err => {
+          console.warn('[Supabase Auth Provisioning] Unexpected error:', err);
         });
       }
 
@@ -1151,6 +1190,13 @@ export default function HotelOnboardingPage() {
                     required
                     value={adminUser.phone}
                     onChange={e => setAdminUser({ ...adminUser, phone: e.target.value })}
+                  />
+                  <Input
+                    label="Administrator Password"
+                    required
+                    type="password"
+                    value={adminUser.password}
+                    onChange={e => setAdminUser({ ...adminUser, password: e.target.value })}
                   />
                 </div>
               </div>

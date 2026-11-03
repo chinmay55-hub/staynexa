@@ -4,6 +4,7 @@ import { AuthProvider } from './contexts/AuthContext';
 import { useAuth } from './contexts/useAuth';
 import { ToastProvider } from './components/ui';
 import LoginPage from './pages/LoginPage';
+import ResetPasswordPage from './pages/ResetPasswordPage';
 import AppLayout from './components/layout/AppLayout';
 
 // Super Admin pages
@@ -81,6 +82,7 @@ function AppRoutes() {
     <Routes>
       {/* Public routes */}
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/guest" element={<GuestPortalPage />} />
       <Route path="/guest/:token" element={<GuestPortalPage />} />
       <Route path="/guest/*" element={<GuestPortalPage />} />

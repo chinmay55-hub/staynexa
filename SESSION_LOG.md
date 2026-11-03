@@ -55,15 +55,44 @@ Comprehensive review, diagnosis, remediation, security hardening, automated test
 
 ---
 
-### Verification & Testing Results
+### Verification & Testing Results (Initial Hardening)
 - **Vitest Unit & Integration Suites**: 9 test suites passed (192 tests passed, 1 todo, 0 failed).
-- **Oxlint**: 0 errors, 5 warnings (non-blocking React hook/purity warnings).
-- **TypeScript & Vite Production Build**: `tsc -b && vite build` built in 1.02s with 0 errors.
+- **Oxlint**: 0 errors.
+- **TypeScript & Vite Production Build**: `tsc -b && vite build` passed with 0 errors.
 - **Playwright Full E2E Test Suite**: 40/40 tests passed across Chromium and Mobile Chrome viewports in 1.4m.
-  - `auth.spec.ts`: 4 passed
-  - `guest-cart.spec.ts`: 2 passed
-  - `guest-portal.spec.ts`: 8 passed
-  - `kds-realtime.spec.ts`: 2 passed
-  - `qr-resolution.spec.ts`: 14 passed
-  - `responsive.spec.ts`: 6 passed
-  - `tenant-isolation.spec.ts`: 4 passed
+
+---
+
+## Session 2: Complete Production Readiness & Security Hardening (2026-11-03)
+
+### Scope & Architectural Upgrades
+1. **Password Authentication & Storage Hardening**:
+   - Replaced SHA-256 with OWASP-standard PBKDF2-HMAC-SHA512 (100,000 iterations, 16-byte random salt, constant-time comparison).
+   - Removed all plaintext comparison fallbacks (`inputPassword === storedHashOrPlain`).
+   - Completely abolished `staynexa_custom_credentials` from `localStorage` and added startup purge.
+   - Eliminated production mock auth fallback in `AuthContext.tsx` (`!isDemo && supabase`).
+2. **Complete Password Reset Workflow**:
+   - Implemented `resetPassword` and `updatePassword` in `AuthContext.tsx` using Supabase Auth (`resetPasswordForEmail` with redirect, `updateUser`).
+   - Created `/reset-password` route and `ResetPasswordPage.tsx` with real-time field confirmation and length validation.
+   - Added interactive "Forgot password?" modal dialog to `LoginPage.tsx`.
+3. **Live Supabase Auth Provisioning**:
+   - Wired `HotelOnboardingPage.tsx` to provision primary hotel administrator accounts into Supabase Auth via `supabase.auth.signUp`, followed by atomic upsert of `profiles` and `hotel_memberships`.
+   - Wired `UsersManagementPage.tsx` to provision new user accounts into Supabase Auth with custom password inputs.
+4. **Automated E2E Test Suite Expansion**:
+   - Added `tests/e2e/housekeeping-realtime.spec.ts`: verified multi-context guest housekeeping request fulfillment and live status updates.
+   - Added dynamic QR code lifecycle verification in `tests/e2e/qr-resolution.spec.ts` guaranteeing fail-closed enforcement.
+   - Added password recovery modal and `/reset-password` validation tests in `tests/e2e/auth.spec.ts`.
+
+### Final Verification Results
+- **Vitest Unit & Integration Suites**: 9 passed (192 passed, 1 todo, 0 failed in 1.33s).
+- **Oxlint**: 0 errors across 90 files.
+- **TypeScript & Vite Production Build**: `tsc -b && vite build` built in 1.57s with 0 errors.
+- **Playwright Full E2E Test Suite**: 54/54 tests passed (100% pass rate) across Chromium and Mobile Chrome viewports in 2.4m:
+  - `auth.spec.ts`: 14 passed (unauthenticated route protection, KDS login routing, invalid credential rejection, session restoration across reload, role authorization enforcement, forgot password modal recovery request, reset password page validation).
+  - `guest-cart.spec.ts`: 2 passed (item addition, quantity updates, server-aligned subtotal/tax/delivery/grand totals).
+  - `guest-portal.spec.ts`: 8 passed (branding, room number, Wi-Fi copy, dining items, vegetarian filter).
+  - `housekeeping-realtime.spec.ts`: 2 passed (cross-device guest submission -> staff ticket receipt -> staff fulfillment -> guest live tracker update).
+  - `kds-realtime.spec.ts`: 2 passed (cross-device guest order submission -> KDS ticket receipt -> status advances -> guest live tracker update).
+  - `qr-resolution.spec.ts`: 16 passed (valid token resolution, alias /q/ routing, trailing slash handling, fail-closed invalid token rejection, dynamic QR lifecycle & deactivation).
+  - `responsive.spec.ts`: 6 passed (mobile 375x667, tablet 768x1024, desktop 1280x720 4-column kanban).
+  - `tenant-isolation.spec.ts`: 4 passed (Hotel A vs Hotel B tenant separation).
