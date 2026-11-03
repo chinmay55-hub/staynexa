@@ -4,7 +4,6 @@ import type { UserRole, Profile } from '../types';
 import { DEMO_PROFILES, DEMO_MEMBERSHIPS } from '../data/demo';
 import { supabase, isDemoMode } from '../lib/supabase';
 import { demoDataService, staffService, hotelService } from '../services/demoDataService';
-import { verifyPassword } from '../utils/cryptoAuth';
 import { AuthContext } from './useAuth';
 
 export interface AuthUser {
@@ -52,6 +51,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     return null;
   });
+
+  // Purge any legacy browser-stored credential artifacts
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        localStorage.removeItem('staynexa_custom_credentials');
+      } catch {}
+    }
+  }, []);
 
   // Production Supabase session restoration
   useEffect(() => {
@@ -164,31 +172,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const signIn = useCallback(async (email: string, password: string): Promise<{ error?: string }> => {
     const normalizedEmail = email.toLowerCase().trim();
-
-    // ─── 0. CUSTOM / ONBOARDED CREDENTIALS LOOKUP ────────────────────────────
-    if (typeof window !== 'undefined' && window.localStorage) {
-      try {
-        const customCreds = JSON.parse(localStorage.getItem('staynexa_custom_credentials') || '{}');
-        const customUser = customCreds[normalizedEmail];
-        if (customUser) {
-          const isValidPassword = await verifyPassword(password, customUser.passwordHash || customUser.password);
-        if (isValidPassword) {
-            const authUser: AuthUser = {
-              id: customUser.userId || `user-${Date.now()}`,
-              email: normalizedEmail,
-              full_name: customUser.fullName || 'Hotel Admin',
-              role: (customUser.role || 'HOTEL_ADMIN') as UserRole,
-              hotel_id: customUser.hotelId,
-            };
-            setUser(authUser);
-            localStorage.setItem('staynexa_demo_user', JSON.stringify(authUser));
-            return {};
-          } else {
-            return { error: 'Invalid password for this administrator account.' };
-          }
-        }
-      } catch {}
-    }
 
     // ─── 1. PRODUCTION SUPABASE AUTH ─────────────────────────────────────────────────────────────────────────────────
     if (!isDemo && supabase) {

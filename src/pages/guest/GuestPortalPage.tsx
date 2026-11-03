@@ -160,23 +160,13 @@ export default function GuestPortalPage() {
               sessionErr = null;
               resolvedDbToken = 'wb-r201-willow';
             }
-          } else if (sessionErr && (token === 'sn-ymz185x0yd' || token.startsWith('sn-') || token.includes('demo'))) {
-            // Defense-in-depth alias fallback for regenerated or demo standee tokens
-            const roomMatch = token.match(/r(\d+)/i) || token.match(/^(\d+)$/);
-            const targetRoomNum = roomMatch ? roomMatch[1] : null;
-            const aliasToken = targetRoomNum && targetRoomNum.startsWith('2') ? 'wb-r201-willow' : 'gp-r101-abc123';
-
-            const aliasRes = await supabase.rpc('resolve_guest_portal_session', { p_token: aliasToken });
-            if (!aliasRes.error && aliasRes.data) {
-              sessionData = aliasRes.data;
-              sessionErr = null;
-              resolvedDbToken = aliasToken;
-            }
           }
 
-                    if (sessionErr) {
-            console.warn('[GuestPortal] Supabase session resolution failed, falling back to resilient room resolution:', sessionErr.message);
-            // Allow fallthrough to resilient local demo store resolution below
+          if (sessionErr) {
+            console.warn('[GuestPortal] Supabase session resolution failed:', sessionErr.message);
+            setError('This QR code is not recognized or has been deactivated. Please ask the front desk for an updated QR code.');
+            setIsLoading(false);
+            return;
           }
 
           if (sessionData && isMounted) {
@@ -1325,7 +1315,7 @@ export default function GuestPortalPage() {
                 </div>
                 <div className="space-y-2">
                   {myRequests.map(req => (
-                    <div key={req.id} className="p-3 rounded-xl bg-stone-50 border border-stone-200 text-xs flex justify-between items-center">
+                    <div key={req.id} data-testid="guest-request-card" data-request-id={req.id} className="p-3 rounded-xl bg-stone-50 border border-stone-200 text-xs flex justify-between items-center">
                       <div>
                         <div className="font-bold text-stone-900">{req.title}</div>
                         <div className="text-[11px] text-stone-500 line-clamp-1">{req.description}</div>

@@ -1,4 +1,3 @@
-import { hashPassword } from '../../utils/cryptoAuth';
 import React, { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { 
@@ -464,20 +463,7 @@ export default function HotelOnboardingPage() {
         });
       }
 
-      // Save custom admin credentials for instant login across all devices
-      if (typeof window !== 'undefined' && window.localStorage) {
-        try {
-          const customCreds = JSON.parse(localStorage.getItem('staynexa_custom_credentials') || '{}');
-          customCreds[adminUser.email.toLowerCase().trim()] = {
-            passwordHash: await hashPassword(adminUser.password || 'password123'),
-            userId: adminProfile.user_id,
-            role: 'HOTEL_ADMIN',
-            hotelId: targetHotelId,
-            fullName: adminUser.full_name || 'Hotel Admin',
-          };
-          localStorage.setItem('staynexa_custom_credentials', JSON.stringify(customCreds));
-        } catch {}
-      }
+
 
       // Emit real-time notification
       realtimeSync.emit('NEW_NOTIFICATION', {

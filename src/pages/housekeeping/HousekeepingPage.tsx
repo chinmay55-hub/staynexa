@@ -417,7 +417,7 @@ export default function HousekeepingPage({ defaultTab = 'TASKS' }: { defaultTab?
               {guestRequests.map(req => {
                 const isPending = req.status === 'PENDING' || req.status === 'ASSIGNED' || req.status === 'IN_PROGRESS';
                 return (
-                  <Card key={req.id} className="border-stone-200 shadow-xs flex flex-col justify-between">
+                  <Card key={req.id} data-testid="housekeeping-request-card" data-request-id={req.id} className="border-stone-200 shadow-xs flex flex-col justify-between">
                     <CardContent className="p-4 space-y-3">
                       <div className="flex items-start justify-between">
                         <div>

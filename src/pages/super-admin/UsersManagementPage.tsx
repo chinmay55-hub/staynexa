@@ -1,4 +1,3 @@
-import { hashPassword } from '../../utils/cryptoAuth';
 import React, { useState, useEffect } from 'react';
 import { Search, Plus, CheckCircle2, XCircle, Edit2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, Button, Input, Select, Modal } from '../../components/ui';
@@ -124,19 +123,7 @@ export default function UsersManagementPage() {
       });
     }
 
-    if (typeof window !== 'undefined' && window.localStorage) {
-      try {
-        const customCreds = JSON.parse(localStorage.getItem('staynexa_custom_credentials') || '{}');
-        customCreds[newUser.email.toLowerCase().trim()] = {
-          passwordHash: await hashPassword(newUser.password || 'password123'),
-          userId: createdProfile.user_id,
-          role: newUser.role,
-          hotelId: newUser.hotel_id,
-          fullName: newUser.full_name,
-        };
-        localStorage.setItem('staynexa_custom_credentials', JSON.stringify(customCreds));
-      } catch {}
-    }
+
     setUsers([...staffService.getAllProfiles()]);
     setMemberships([...staffService.getAllMemberships()]);
     setIsAddOpen(false);

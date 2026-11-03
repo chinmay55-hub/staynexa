@@ -1477,8 +1477,9 @@ export const serviceRequestService = {
           saveDemoStore();
           realtimeSync.emit('NEW_SERVICE_REQUEST', { request: req });
           return { success: true, request: req, trackingToken: (req as any).tracking_token };
-        } catch (supabaseErr) {
-          console.warn('[serviceRequestService.submitRequest] Supabase write failed, falling back to local emit:', supabaseErr);
+        } catch (supabaseErr: any) {
+          console.error('[serviceRequestService.submitRequest] Supabase write failed:', supabaseErr);
+          return { success: false, request: null as any, error: supabaseErr?.message || 'Failed to submit service request.' };
         }
       }
       const req = serviceRequestService.create(data);
