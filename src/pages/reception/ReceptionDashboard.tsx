@@ -101,8 +101,11 @@ export default function ReceptionDashboard() {
       refreshData();
     });
 
+    const unsubResync = realtimeSync.onResync(refreshData);
+
     return () => {
       disconnectSupabase();
+      unsubResync();
       unsubNewOrder();
       unsubOrderStatus();
       unsubNewRequest();

@@ -75,6 +75,8 @@ export default function MaintenancePage() {
       setGuestRequests(serviceRequestService.getAll(hotelId).filter(isMaintenanceReq));
     };
 
+    const unsubResync = realtimeSync.onResync(refreshTickets);
+
     const unsubNew = realtimeSync.subscribe('NEW_MAINTENANCE_TICKET', ({ ticket }) => {
       if (ticket.hotel_id === hotelId) {
         setTickets(prev => {
@@ -112,6 +114,7 @@ export default function MaintenancePage() {
     return () => {
       window.removeEventListener('storage', handleStorage);
       disconnectSupabase();
+      unsubResync();
       unsubNew();
       unsubUpdate();
       unsubNewReq();

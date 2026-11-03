@@ -61,6 +61,7 @@ export default function RoomBoardPage() {
     const unsubMaintUpdated = realtimeSync.subscribe('MAINTENANCE_TICKET_UPDATED', refreshBoard);
     const unsubHkNew = realtimeSync.subscribe('NEW_HOUSEKEEPING_TASK', refreshBoard);
     const unsubHkUpdated = realtimeSync.subscribe('HOUSEKEEPING_TASK_UPDATED', refreshBoard);
+    const unsubResync = realtimeSync.onResync(refreshBoard);
 
     const handleStorage = (e: StorageEvent) => {
       if (e.key === 'staynexa_demo_store' || e.key === 'staynexa_global_sync') {
@@ -82,6 +83,7 @@ export default function RoomBoardPage() {
       unsubMaintUpdated();
       unsubHkNew();
       unsubHkUpdated();
+      unsubResync();
     };
   }, [hotelId]);
 

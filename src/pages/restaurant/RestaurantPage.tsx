@@ -67,6 +67,8 @@ export default function RestaurantPage() {
       setOrders([...orderService.getAll(hotelId)]);
     };
 
+    const disconnectSupabase = realtimeSync.connectSupabaseHotelChannel(hotelId);
+    const unsubResync = realtimeSync.onResync(refreshData);
     const unsubNewOrder = realtimeSync.subscribe('NEW_ORDER', refreshData);
     const unsubOrderStatus = realtimeSync.subscribe('ORDER_STATUS_CHANGED', refreshData);
     const unsubMenu = realtimeSync.subscribe('MENU_UPDATED', refreshData);
@@ -80,6 +82,8 @@ export default function RestaurantPage() {
 
     return () => {
       window.removeEventListener('storage', handleStorage);
+      disconnectSupabase();
+      unsubResync();
       unsubNewOrder();
       unsubOrderStatus();
       unsubMenu();

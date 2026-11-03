@@ -76,6 +76,8 @@ export default function HousekeepingPage({ defaultTab = 'TASKS' }: { defaultTab?
       setGuestRequests(serviceRequestService.getAll(hotelId).filter(isHousekeepingReq));
     };
 
+    const unsubResync = realtimeSync.onResync(refreshHousekeeping);
+
     const unsubNewTask = realtimeSync.subscribe('NEW_HOUSEKEEPING_TASK', ({ task }) => {
       if (isSameHotel(task.hotel_id, hotelId)) {
         setTasks(prev => {
@@ -117,6 +119,7 @@ export default function HousekeepingPage({ defaultTab = 'TASKS' }: { defaultTab?
       unsubNewTask();
       unsubUpdateTask();
       unsubNewReq();
+      unsubResync();
       unsubReqStatus();
     };
   }, [hotelId]);

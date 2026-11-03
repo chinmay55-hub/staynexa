@@ -45,7 +45,24 @@ export interface RealtimePayloadMap {
 
 type EventCallback<T extends RealtimeEventType> = (payload: RealtimePayloadMap[T]) => void;
 
+interface HotelChannelEntry {
+  channel: any;
+  refs: number;
+  lostConnection: boolean;
+}
+
 const SEEN_EVENT_LIMIT = 500;
+
+// Updates to the same record with the same status are distinct events, so they carry the record's timestamp.
+const VERSIONED_EVENTS = new Set<string>([
+  'ORDER_STATUS_CHANGED',
+  'REQUEST_STATUS_CHANGED',
+  'HOUSEKEEPING_TASK_UPDATED',
+  'MAINTENANCE_TICKET_UPDATED',
+  'RESERVATION_UPDATED',
+  'ROOM_UPDATED',
+  'FOLIO_UPDATED',
+]);
 
 // Same entity + status yields the same identity no matter which path delivered it
 // (local action, BroadcastChannel, storage, Supabase broadcast, or Postgres change).
@@ -53,17 +70,20 @@ function eventIdentity(type: string, payload: any): string {
   const p = payload || {};
   const entity = p.order || p.request || p.task || p.ticket || p.notification || p.reservation || p.room || p.folio || p.log;
   const id = p.orderId ?? p.requestId ?? p.taskId ?? p.ticketId ?? entity?.id ?? p.id;
-  const status = p.status ?? entity?.status ?? '';
-  return id === undefined ? `${type}:${JSON.stringify(payload)}` : `${type}:${id}:${status}`;
+  if (id === undefined) return `${type}:${JSON.stringify(payload)}`;
+  const status = String(p.status ?? entity?.status ?? '').toUpperCase();
+  const version = VERSIONED_EVENTS.has(type) ? String(entity?.updated_at ?? '') : '';
+  return `${type}:${id}:${status}:${version}`;
 }
 
 class RealtimeSyncService {
   private broadcastChannel: BroadcastChannel | null = null;
   private listeners: Map<RealtimeEventType, Set<EventCallback<any>>> = new Map();
-  private activeSupabaseChannels: Map<string, any> = new Map();
+  private hotelChannels: Map<string, HotelChannelEntry> = new Map();
   private seenEvents: Set<string> = new Set();
   private isConnectedToSupabase: boolean = false;
   private connectionChangeListeners: Set<(connected: boolean) => void> = new Set();
+  private resyncListeners: Set<() => void> = new Set();
 
   constructor() {
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
@@ -93,8 +113,6 @@ class RealtimeSyncService {
         }
       });
     }
-
-    this.initSupabaseChannels();
   }
 
   private markSeen(identity: string): boolean {
@@ -122,6 +140,14 @@ class RealtimeSyncService {
     };
   }
 
+  // Fired after a dropped hotel channel reconnects, so screens can reload data missed while offline.
+  public onResync(callback: () => void): () => void {
+    this.resyncListeners.add(callback);
+    return () => {
+      this.resyncListeners.delete(callback);
+    };
+  }
+
   private setConnectionState(connected: boolean): void {
     if (this.isConnectedToSupabase !== connected) {
       this.isConnectedToSupabase = connected;
@@ -135,10 +161,14 @@ class RealtimeSyncService {
     }
   }
 
-  private initSupabaseChannels(): void {
-    if (typeof window === 'undefined' || !isSupabaseConfigured() || !supabase) {
-      this.setConnectionState(false);
-    }
+  private notifyResync(): void {
+    this.resyncListeners.forEach(cb => {
+      try {
+        cb();
+      } catch (e) {
+        console.warn('[RealtimeSync] Error in resync listener:', e);
+      }
+    });
   }
 
   public subscribe<T extends RealtimeEventType>(type: T, callback: EventCallback<T>): () => void {
@@ -193,144 +223,171 @@ class RealtimeSyncService {
       }
     }
 
-    if (isSupabaseConfigured() && supabase && this.activeSupabaseChannels.size > 0) {
-      const sentChannels = new Set<any>();
-      this.activeSupabaseChannels.forEach((channel) => {
-        if (!sentChannels.has(channel)) {
-          sentChannels.add(channel);
-          try {
-            channel.send({
-              type: 'broadcast',
-              event: type,
-              payload,
-            });
-          } catch (err) {
-            console.warn('[RealtimeSync] WebSocket broadcast send failed:', err);
-          }
+    if (isSupabaseConfigured() && supabase) {
+      this.hotelChannels.forEach((entry) => {
+        try {
+          entry.channel.send({
+            type: 'broadcast',
+            event: type,
+            payload,
+          });
+        } catch (err) {
+          console.warn('[RealtimeSync] WebSocket broadcast send failed:', err);
         }
       });
     }
   }
 
   // Applies an event that arrived from another source; skipped if this device already applied it.
-  private receive(type: RealtimeEventType, payload: any): void {
+  public receive(type: RealtimeEventType, payload: any): void {
     if (!this.markSeen(eventIdentity(type, payload))) return;
     this.dispatchLocal(type, payload);
   }
 
+  // Shares one channel per hotel between screens; the channel closes when the last screen releases it.
   public connectSupabaseHotelChannel(hotelId: string): () => void {
     if (!isSupabaseConfigured() || !supabase || !hotelId || typeof hotelId !== 'string') {
       return () => {};
     }
 
     const dbHotelId = toDbHotelId(hotelId);
-    const channelKey = `staynexa-hotel-${dbHotelId}`;
-
-    if (this.activeSupabaseChannels.has(channelKey) || this.activeSupabaseChannels.has(hotelId)) {
-      return () => this.disconnectSupabaseHotelChannel(hotelId);
+    const existing = this.hotelChannels.get(dbHotelId);
+    if (existing) {
+      existing.refs += 1;
+    } else {
+      this.openHotelChannel(dbHotelId);
     }
 
-    try {
-      const channel = supabase.channel(channelKey)
-        .on(
-          'broadcast',
-          { event: '*' },
-          (event: { event?: string; payload?: any }) => {
-            if (event.event && event.payload) {
-              this.receive(event.event as RealtimeEventType, event.payload);
-            }
-          }
-        )
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'orders', filter: `hotel_id=eq.${dbHotelId}` },
-          (payload) => {
-            const rawOrder = payload.new as Order;
-            if (!rawOrder) return;
-
-            const safeOrder: Order = {
-              ...rawOrder,
-              items: rawOrder.items && Array.isArray(rawOrder.items) ? rawOrder.items : [],
-            };
-
-            if (payload.eventType === 'INSERT') {
-              this.receive('NEW_ORDER', { order: safeOrder });
-            } else if (payload.eventType === 'UPDATE') {
-              this.receive('ORDER_STATUS_CHANGED', {
-                orderId: rawOrder.id,
-                status: rawOrder.status,
-                order: safeOrder,
-              });
-            }
-          }
-        )
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'service_requests', filter: `hotel_id=eq.${dbHotelId}` },
-          (payload) => {
-            const rawReq = payload.new as ServiceRequest;
-            if (!rawReq) return;
-
-            if (payload.eventType === 'INSERT') {
-              this.receive('NEW_SERVICE_REQUEST', { request: rawReq });
-            } else if (payload.eventType === 'UPDATE') {
-              this.receive('REQUEST_STATUS_CHANGED', {
-                requestId: rawReq.id,
-                status: rawReq.status,
-                request: rawReq,
-              });
-            }
-          }
-        )
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'housekeeping_tasks', filter: `hotel_id=eq.${dbHotelId}` },
-          (payload) => {
-            if (payload.eventType === 'INSERT') {
-              this.receive('NEW_HOUSEKEEPING_TASK', { task: payload.new as HousekeepingTask });
-            } else if (payload.eventType === 'UPDATE') {
-              this.receive('HOUSEKEEPING_TASK_UPDATED', {
-                taskId: payload.new.id,
-                task: payload.new as HousekeepingTask,
-              });
-            }
-          }
-        )
-        .on(
-          'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'notifications', filter: `hotel_id=eq.${dbHotelId}` },
-          (payload) => {
-            this.receive('NEW_NOTIFICATION', { notification: payload.new as Notification });
-          }
-        )
-        .subscribe((status) => {
-          if (status === 'SUBSCRIBED') {
-            this.setConnectionState(true);
-          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-            this.setConnectionState(false);
-          }
-        });
-
-      this.activeSupabaseChannels.set(channelKey, channel);
-      this.activeSupabaseChannels.set(hotelId, channel);
-      this.activeSupabaseChannels.set(dbHotelId, channel);
-
-      return () => this.disconnectSupabaseHotelChannel(hotelId);
-    } catch (err) {
-      console.warn('Failed to establish Supabase Realtime connection:', err);
-      return () => {};
-    }
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.releaseHotelChannel(dbHotelId);
+    };
   }
 
-  public disconnectSupabaseHotelChannel(hotelId: string): void {
-    const dbHotelId = toDbHotelId(hotelId);
+  private openHotelChannel(dbHotelId: string): void {
+    if (!supabase) return;
+
     const channelKey = `staynexa-hotel-${dbHotelId}`;
-    const channel = this.activeSupabaseChannels.get(channelKey) || this.activeSupabaseChannels.get(hotelId);
-    if (channel && supabase) {
-      supabase.removeChannel(channel);
-      this.activeSupabaseChannels.delete(channelKey);
-      this.activeSupabaseChannels.delete(hotelId);
-      this.activeSupabaseChannels.delete(dbHotelId);
+    const channel = supabase.channel(channelKey)
+      .on(
+        'broadcast',
+        { event: '*' },
+        (event: { event?: string; payload?: any }) => {
+          if (event.event && event.payload) {
+            this.receive(event.event as RealtimeEventType, event.payload);
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'orders', filter: `hotel_id=eq.${dbHotelId}` },
+        (payload) => {
+          const rawOrder = payload.new as Order;
+          if (!rawOrder) return;
+
+          const safeOrder: Order = {
+            ...rawOrder,
+            items: rawOrder.items && Array.isArray(rawOrder.items) ? rawOrder.items : [],
+          };
+
+          if (payload.eventType === 'INSERT') {
+            this.receive('NEW_ORDER', { order: safeOrder });
+          } else if (payload.eventType === 'UPDATE') {
+            this.receive('ORDER_STATUS_CHANGED', {
+              orderId: rawOrder.id,
+              status: rawOrder.status,
+              order: safeOrder,
+            });
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'service_requests', filter: `hotel_id=eq.${dbHotelId}` },
+        (payload) => {
+          const rawReq = payload.new as ServiceRequest;
+          if (!rawReq) return;
+
+          if (payload.eventType === 'INSERT') {
+            this.receive('NEW_SERVICE_REQUEST', { request: rawReq });
+          } else if (payload.eventType === 'UPDATE') {
+            this.receive('REQUEST_STATUS_CHANGED', {
+              requestId: rawReq.id,
+              status: rawReq.status,
+              request: rawReq,
+            });
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'housekeeping_tasks', filter: `hotel_id=eq.${dbHotelId}` },
+        (payload) => {
+          if (payload.eventType === 'INSERT') {
+            this.receive('NEW_HOUSEKEEPING_TASK', { task: payload.new as HousekeepingTask });
+          } else if (payload.eventType === 'UPDATE') {
+            this.receive('HOUSEKEEPING_TASK_UPDATED', {
+              taskId: payload.new.id,
+              task: payload.new as HousekeepingTask,
+            });
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'maintenance_tickets', filter: `hotel_id=eq.${dbHotelId}` },
+        (payload) => {
+          if (payload.eventType === 'INSERT') {
+            this.receive('NEW_MAINTENANCE_TICKET', { ticket: payload.new as MaintenanceTicket });
+          } else if (payload.eventType === 'UPDATE') {
+            this.receive('MAINTENANCE_TICKET_UPDATED', {
+              ticketId: payload.new.id,
+              ticket: payload.new as MaintenanceTicket,
+            });
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'notifications', filter: `hotel_id=eq.${dbHotelId}` },
+        (payload) => {
+          this.receive('NEW_NOTIFICATION', { notification: payload.new as Notification });
+        }
+      )
+      .subscribe((status) => {
+        const entry = this.hotelChannels.get(dbHotelId);
+        if (!entry || entry.channel !== channel) return;
+
+        if (status === 'SUBSCRIBED') {
+          this.setConnectionState(true);
+          if (entry.lostConnection) {
+            entry.lostConnection = false;
+            this.notifyResync();
+          }
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          entry.lostConnection = true;
+          this.setConnectionState(false);
+        }
+      });
+
+    this.hotelChannels.set(dbHotelId, { channel, refs: 1, lostConnection: false });
+  }
+
+  private releaseHotelChannel(dbHotelId: string): void {
+    const entry = this.hotelChannels.get(dbHotelId);
+    if (!entry) return;
+
+    entry.refs -= 1;
+    if (entry.refs > 0) return;
+
+    this.hotelChannels.delete(dbHotelId);
+    if (supabase) {
+      supabase.removeChannel(entry.channel);
+    }
+    if (this.hotelChannels.size === 0) {
+      this.setConnectionState(false);
     }
   }
 }

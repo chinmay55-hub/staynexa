@@ -56,6 +56,8 @@ export default function RequestsPage() {
   useEffect(() => {
     const disconnectSupabase = realtimeSync.connectSupabaseHotelChannel(hotelId);
 
+    const unsubResync = realtimeSync.onResync(() => setRequests([...serviceRequestService.getAll(hotelId)]));
+
     const unsubNewRequest = realtimeSync.subscribe('NEW_SERVICE_REQUEST', ({ request }) => {
       if (request.hotel_id === hotelId) {
         setRequests(prev => {
@@ -82,6 +84,7 @@ export default function RequestsPage() {
     return () => {
       window.removeEventListener('storage', handleStorage);
       disconnectSupabase();
+      unsubResync();
       unsubNewRequest();
       unsubStatusChange();
     };
