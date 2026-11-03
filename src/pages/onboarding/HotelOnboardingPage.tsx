@@ -1,3 +1,4 @@
+import { hashPassword } from '../../utils/cryptoAuth';
 import React, { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { 
@@ -8,7 +9,6 @@ import {
   Sparkles,
   Plus,
   Trash2,
-  AlertCircle,
   RotateCcw,
   FileText
 } from 'lucide-react';
@@ -352,7 +352,7 @@ export default function HotelOnboardingPage() {
     setCurrentStep(prev => Math.max(0, prev - 1));
   };
 
-  const handleActivate = () => {
+  const handleActivate = async () => {
     let targetHotelId = hotelId;
 
     if (targetHotelId) {
@@ -469,7 +469,7 @@ export default function HotelOnboardingPage() {
         try {
           const customCreds = JSON.parse(localStorage.getItem('staynexa_custom_credentials') || '{}');
           customCreds[adminUser.email.toLowerCase().trim()] = {
-            password: adminUser.password || 'password123',
+            passwordHash: await hashPassword(adminUser.password || 'password123'),
             userId: adminProfile.user_id,
             role: 'HOTEL_ADMIN',
             hotelId: targetHotelId,

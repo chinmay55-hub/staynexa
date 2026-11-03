@@ -271,28 +271,57 @@ class RealtimeSyncService {
       const p = payload as any;
       const hotelId = p?.order?.hotel_id || p?.request?.hotel_id || p?.task?.hotel_id || p?.notification?.hotel_id || p?.reservation?.hotel_id || p?.room?.hotel_id;
       if (hotelId) {
-        const dbId = toDbHotelId(hotelId);
-        if (!this.hotelChannels.has(dbId)) {
-          this.openHotelChannel(dbId);
+        const targetDbId = toDbHotelId(hotelId);
+        if (!this.hotelChannels.has(targetDbId)) {
+          this.openHotelChannel(targetDbId);
         }
-      }
-
-      this.hotelChannels.forEach((entry, dbHotelId) => {
-        if (entry.status === 'SUBSCRIBED' || entry.channel?.state === 'joined') {
-          try {
-            entry.channel.send({
-              type: 'broadcast',
-              event: type,
-              payload,
-            });
-          } catch (err) {
-            console.warn('[RealtimeSync] WebSocket broadcast send failed, queuing:', err);
+        const targetEntry = this.hotelChannels.get(targetDbId);
+        if (targetEntry) {
+          if (targetEntry.status === 'SUBSCRIBED' || targetEntry.channel?.state === 'joined') {
+            try {
+              const res = targetEntry.channel.send({
+                type: 'broadcast',
+                event: type,
+                payload,
+              });
+              if (res && typeof res.catch === 'function') {
+                res.catch((err: any) => {
+                  console.warn('[RealtimeSync] WebSocket broadcast send async error, queuing:', err);
+                  this.pendingBroadcastQueue.push({ dbHotelId: targetDbId, type, payload });
+                });
+              }
+            } catch (err) {
+              console.warn('[RealtimeSync] WebSocket broadcast send failed, queuing:', err);
+              this.pendingBroadcastQueue.push({ dbHotelId: targetDbId, type, payload });
+            }
+          } else {
+            this.pendingBroadcastQueue.push({ dbHotelId: targetDbId, type, payload });
+          }
+        }
+      } else {
+        this.hotelChannels.forEach((entry, dbHotelId) => {
+          if (entry.status === 'SUBSCRIBED' || entry.channel?.state === 'joined') {
+            try {
+              const res = entry.channel.send({
+                type: 'broadcast',
+                event: type,
+                payload,
+              });
+              if (res && typeof res.catch === 'function') {
+                res.catch((err: any) => {
+                  console.warn('[RealtimeSync] WebSocket broadcast send async error, queuing:', err);
+                  this.pendingBroadcastQueue.push({ dbHotelId, type, payload });
+                });
+              }
+            } catch (err) {
+              console.warn('[RealtimeSync] WebSocket broadcast send failed, queuing:', err);
+              this.pendingBroadcastQueue.push({ dbHotelId, type, payload });
+            }
+          } else {
             this.pendingBroadcastQueue.push({ dbHotelId, type, payload });
           }
-        } else {
-          this.pendingBroadcastQueue.push({ dbHotelId, type, payload });
-        }
-      });
+        });
+      }
     }
   }
 

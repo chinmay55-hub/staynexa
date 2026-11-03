@@ -162,6 +162,7 @@ export default function KitchenDisplayPage() {
     // Subscribed to unified WebSocket channel via realtimeSync
     const unsubNewOrder = realtimeSync.subscribe('NEW_ORDER', ({ order }) => {
       if (isSameHotel(order.hotel_id, hotelId)) {
+        orderService.mirrorOrderLocally(order);
         setOrders(prev => {
           if (prev.some(o => o.id === order.id)) return prev;
           return [order, ...prev];
@@ -213,11 +214,11 @@ export default function KitchenDisplayPage() {
     setUpdatingOrderId(orderId);
 
     try {
-      await orderService.updateStatusAsync(orderId, nextStatus);
+      const updated = await orderService.updateStatusAsync(orderId, nextStatus);
       if (nextStatus === 'DELIVERED' || nextStatus === 'CANCELLED') {
         setOrders(prev => prev.filter(o => o.id !== orderId));
       } else {
-        setOrders(prev => prev.map(o => (o.id === orderId ? { ...o, status: nextStatus } : o)));
+        setOrders(prev => prev.map(o => (o.id === orderId ? { ...o, ...(updated || {}), status: nextStatus } : o)));
       }
     } catch (err: any) {
       console.error('KDS status transition failed:', err);
@@ -758,7 +759,7 @@ function KdsCard({
   const isUrgent = elapsedMins >= 20;
 
   return (
-    <div className={`p-4 rounded-xl border bg-[#24272c] transition-all flex flex-col justify-between gap-3 shadow-md ${
+    <div data-testid="kds-card" data-order-id={order.id} className={`p-4 rounded-xl border bg-[#24272c] transition-all flex flex-col justify-between gap-3 shadow-md ${
       isUrgent ? 'border-rose-500/80 ring-1 ring-rose-500/50' : 'border-white/10'
     }`}>
       {/* Top row */}

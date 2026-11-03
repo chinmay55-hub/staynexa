@@ -1664,8 +1664,8 @@ export const qrService = {
       room: rooms.find(r => r.id === qr.room_id),
     };
   },
-  generate: (hotelId: string, roomId?: string): QRCode => {
-    const token = `sn-${Math.random().toString(36).slice(2, 12)}`;
+  generate: (hotelId: string, roomId?: string, customToken?: string): QRCode => {
+    const token = customToken || `sn-${Math.random().toString(36).slice(2, 12)}`;
     const qr: QRCode = {
       id: uuid(), hotel_id: hotelId, room_id: roomId, token, url: `/q/${token}`,
       type: roomId ? 'ROOM' : 'HOTEL', is_active: true, created_at: now(),
@@ -1691,7 +1691,7 @@ export const qrService = {
         console.warn('[qrService.generateAsync] Supabase QR write error, falling back to local demo store:', err);
       }
     }
-    return qrService.generate(hotelId, roomId);
+    return qrService.generate(hotelId, roomId, customToken);
   },
   deactivate: (id: string): void => {
     const idx = qrCodes.findIndex(q => q.id === id);

@@ -59,6 +59,17 @@ export const orderService = {
     return fallbackOrders.filter(o => o.hotel_id === hotelId);
   },
 
+  mirrorOrderLocally: (order: Order) => {
+    if (!order || !order.id) return;
+    if (storeAdapter) {
+      storeAdapter.createLocal(order);
+    } else {
+      const idx = fallbackOrders.findIndex(o => o.id === order.id);
+      if (idx !== -1) fallbackOrders[idx] = order;
+      else fallbackOrders.unshift(order);
+    }
+  },
+
   getById: (id: string): Order | undefined => {
     if (storeAdapter) return storeAdapter.getById(id);
     return fallbackOrders.find(o => o.id === id);
@@ -401,7 +412,8 @@ export const orderService = {
       } else if (updated && status === 'CANCELLED' && storeAdapter.detachFromFolio) {
         storeAdapter.detachFromFolio(updated);
       }
-    } else {
+    }
+    if (!updated) {
       const idx = fallbackOrders.findIndex(o => o.id === id);
       if (idx !== -1) {
         fallbackOrders[idx] = { ...fallbackOrders[idx], status, ...timeFields, updated_at: nowISO() };
@@ -409,10 +421,17 @@ export const orderService = {
       }
     }
 
-    if (updated) {
-      realtimeSync.emit('ORDER_STATUS_CHANGED', { orderId: id, status, order: updated });
-    }
-    return updated;
+    const existing = orderService.getById(id) || fallbackOrders.find(o => o.id === id);
+    const broadcastOrder = updated || ({
+      ...(existing || {}),
+      id,
+      status,
+      ...timeFields,
+      updated_at: nowISO(),
+    } as Order);
+
+    realtimeSync.emit('ORDER_STATUS_CHANGED', { orderId: id, status, order: broadcastOrder });
+    return updated || broadcastOrder;
   },
 
   /**

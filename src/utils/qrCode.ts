@@ -40,18 +40,18 @@ export const setCustomPublicBaseUrl = (url: string | null): void => {
  */
 export const getBaseUrl = (): string => {
   if (typeof window !== 'undefined' && window.location) {
-    // 1. Explicit user override in localStorage (e.g. active tunnel preview)
-    const storedTunnel = getStoredTunnelUrl();
-    if (storedTunnel) {
-      return storedTunnel;
-    }
-
     const origin = window.location.origin || '';
     const hostname = window.location.hostname || '';
 
-    // 2. If currently accessed via live cloud domain or non-localhost hostname, use origin directly
+    // 1. If currently accessed via live cloud domain or non-localhost hostname, always use origin directly
     if (origin && hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
       return origin;
+    }
+
+    // 2. Explicit user override in localStorage (active tunnel preview for local development only)
+    const storedTunnel = getStoredTunnelUrl();
+    if (storedTunnel) {
+      return storedTunnel;
     }
 
     // 3. Environment variable override

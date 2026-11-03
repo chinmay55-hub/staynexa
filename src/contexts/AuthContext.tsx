@@ -4,6 +4,7 @@ import type { UserRole, Profile } from '../types';
 import { DEMO_PROFILES, DEMO_MEMBERSHIPS } from '../data/demo';
 import { supabase, isDemoMode } from '../lib/supabase';
 import { demoDataService, staffService, hotelService } from '../services/demoDataService';
+import { verifyPassword } from '../utils/cryptoAuth';
 import { AuthContext } from './useAuth';
 
 export interface AuthUser {
@@ -170,7 +171,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const customCreds = JSON.parse(localStorage.getItem('staynexa_custom_credentials') || '{}');
         const customUser = customCreds[normalizedEmail];
         if (customUser) {
-          if (customUser.password === password) {
+          const isValidPassword = await verifyPassword(password, customUser.passwordHash || customUser.password);
+        if (isValidPassword) {
             const authUser: AuthUser = {
               id: customUser.userId || `user-${Date.now()}`,
               email: normalizedEmail,

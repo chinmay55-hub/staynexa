@@ -1,6 +1,7 @@
+import { hashPassword } from '../../utils/cryptoAuth';
 import React, { useState, useEffect } from 'react';
-import { Users, Search, Plus, Mail, Phone, Building, ShieldCheck, CheckCircle2, XCircle, Edit2 } from 'lucide-react';
-import { Card, CardContent, CardHeader, Button, Input, Select, Badge, Modal } from '../../components/ui';
+import { Search, Plus, CheckCircle2, XCircle, Edit2 } from 'lucide-react';
+import { Card, CardContent, CardHeader, Button, Input, Select, Modal } from '../../components/ui';
 import { staffService, hotelService, reloadDemoStoreFromStorage } from '../../services/demoDataService';
 import type { Profile, UserRole, Hotel, HotelMembership } from '../../types';
 
@@ -104,7 +105,7 @@ export default function UsersManagementPage() {
     setUsers([...staffService.getAllProfiles()]);
   };
 
-  const handleCreateUser = (e: React.FormEvent) => {
+  const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newUser.full_name || !newUser.email) return;
     const createdProfile = staffService.createProfile({
@@ -127,7 +128,7 @@ export default function UsersManagementPage() {
       try {
         const customCreds = JSON.parse(localStorage.getItem('staynexa_custom_credentials') || '{}');
         customCreds[newUser.email.toLowerCase().trim()] = {
-          password: newUser.password || 'password123',
+          passwordHash: await hashPassword(newUser.password || 'password123'),
           userId: createdProfile.user_id,
           role: newUser.role,
           hotelId: newUser.hotel_id,

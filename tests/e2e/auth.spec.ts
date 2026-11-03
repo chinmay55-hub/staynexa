@@ -17,7 +17,7 @@ test.describe('Authentication & Role Protection', () => {
 
   test('Kitchen staff logs in and is routed to /kitchen', async ({ page }) => {
     await page.goto('/login');
-    await expect(page.locator('text=StayNexa').first()).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('input[type="email"]')).toBeVisible({ timeout: 10000 });
 
     await page.fill('input[type="email"]', 'mohan@grandpalace.com');
     await page.fill('input[type="password"]', 'demo123');

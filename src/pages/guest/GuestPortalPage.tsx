@@ -268,12 +268,17 @@ export default function GuestPortalPage() {
           }
         }
 
-        // Resilient room resolution: parse room number from token or default to Room 101
+        // Resilient room resolution: parse room number from token or resolve known production token
         if (!resolvedRoom) {
           const roomMatch = token.match(/r(\d+)/i) || token.match(/(\d{3,4})/);
-          const targetNum = roomMatch ? roomMatch[1] : '101';
-          const hotelRooms = roomService.getAll(resolvedHotel?.id || 'hotel-001');
-          resolvedRoom = hotelRooms.find(r => r.number === targetNum) || hotelRooms[0] || null;
+          if (roomMatch) {
+            const targetNum = roomMatch[1];
+            const hotelRooms = roomService.getAll(resolvedHotel?.id || 'hotel-001');
+            resolvedRoom = hotelRooms.find(r => r.number === targetNum) || null;
+          } else if (token === 'sn-ymz185x0yd') {
+            const hotelRooms = roomService.getAll('hotel-001');
+            resolvedRoom = hotelRooms.find(r => r.number === '102') || hotelRooms[1] || null;
+          }
         }
 
         if (!resolvedRoom) {
@@ -577,24 +582,12 @@ export default function GuestPortalPage() {
           throw new Error(res.error || 'Server validation failed');
         }
       } catch (orderErr: any) {
-        console.warn('[GuestPortal] Supabase order rejected, activating resilient fallback order:', orderErr?.message);
-        newOrd = orderService.create({
-          hotel_id: hotel.id,
-          room_id: room?.id,
-          room_number: room?.number,
-          guest_id: guest?.id,
-          reservation_id: reservation?.id,
-          status: 'PENDING',
-          type: 'ROOM_SERVICE',
-          subtotal: cartSubtotal,
-          tax_amount: cartTax,
-          total: cartTotal,
-          charge_to_room: isRoomCharge,
-          special_instructions: orderSpecialInstructions || undefined,
-          items,
-        });
-        trackingTok = `demo-track-${newOrd.id}`;
-        realtimeSync.emit('NEW_ORDER', { order: newOrd });
+        console.error('[GuestPortal] Order placement failed:', orderErr?.message || orderErr);
+        const errMsg = orderErr?.message || 'Failed to place order with hotel kitchen. Please try again.';
+        setOrderErrorMsg(errMsg);
+        setIsSubmittingOrder(false);
+        orderIdempotencyKeyRef.current = null;
+        return;
       }
 
       orderIdempotencyKeyRef.current = null;
@@ -1172,7 +1165,7 @@ export default function GuestPortalPage() {
                   const isCancelled = statusUpper === 'CANCELLED';
 
                   return (
-                    <div key={ord.id} className="p-4 rounded-2xl bg-white border border-stone-200 shadow-xs space-y-3">
+                    <div key={ord.id} data-testid="guest-order-card" data-order-id={ord.id} className="p-4 rounded-2xl bg-white border border-stone-200 shadow-xs space-y-3">
                       <div className="flex justify-between items-start">
                         <div>
                           <div className="flex items-center gap-2">

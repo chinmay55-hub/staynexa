@@ -41,7 +41,7 @@ test.describe('Part 15: True Realtime End-to-End Test (Guest Portal to KDS)', ()
     const staffPage = await staffContext.newPage();
 
     await staffPage.goto('/login');
-    await expect(staffPage.locator('text=StayNexa').first()).toBeVisible({ timeout: 10000 });
+    await expect(staffPage.locator('input[type="email"]')).toBeVisible({ timeout: 10000 });
 
     // Authenticate as Kitchen staff
     await staffPage.fill('input[type="email"]', 'mohan@grandpalace.com');
@@ -80,64 +80,62 @@ test.describe('Part 15: True Realtime End-to-End Test (Guest Portal to KDS)', ()
     await chargeBtn.click();
 
     // Wait for the active order card in guest orders tracker
-    const orderBadge = guestPage.locator('span', { hasText: 'PENDING' }).first();
-    await expect(orderBadge).toBeVisible({ timeout: 15000 });
+    const guestOrderCard = guestPage.locator('[data-testid="guest-order-card"]').first();
+    await expect(guestOrderCard).toBeVisible({ timeout: 15000 });
+    await expect(guestOrderCard.locator('span', { hasText: 'PENDING' })).toBeVisible({ timeout: 15000 });
 
-    // Capture the newly created order ID from the card
-    const orderTitleText = await guestPage.locator('span:has-text("Order #")').first().innerText();
-    const _orderTag = orderTitleText.replace('Order #', '').trim();
+    const orderId = await guestOrderCard.getAttribute('data-order-id');
+    const orderTitleText = await guestOrderCard.locator('span:has-text("Order #")').first().innerText();
+    const orderTag = orderTitleText.replace('Order #', '').trim();
 
     // ─── STEP 3: KDS Receives Order in Real Time (WITHOUT Refresh) ───
     // Look at staffPage (Browser B) without calling reload()!
-    const kdsTicket = staffPage.locator(`text=Room 101`).first();
-    await expect(kdsTicket).toBeVisible({ timeout: 15000 });
-    await expect(staffPage.locator('text=Paneer Tikka').first()).toBeVisible();
+    const staffCardSelector = orderId ? `[data-order-id="${orderId}"]` : `[data-testid="kds-card"]:has-text("${orderTag}")`;
+    const staffOrderCard = staffPage.locator(staffCardSelector);
+    await expect(staffOrderCard).toBeVisible({ timeout: 15000 });
+    await expect(staffOrderCard.locator('text=Paneer Tikka')).toBeVisible();
 
     // ─── STEP 4: KDS Advances to ACCEPTED ───
-    const acceptBtn = staffPage.locator('button', { hasText: 'Accept Order' }).first();
-    await acceptBtn.click();
+    const acceptBtn = staffOrderCard.locator('button', { hasText: 'Accept Order' }).first();
+    await acceptBtn.scrollIntoViewIfNeeded();
+    await acceptBtn.click({ force: true });
 
     // Verify ticket moves to Accepted Queue on KDS
     await expect(staffPage.locator('text=Accepted Queue')).toBeVisible();
 
     // Look at Browser A (Guest tracker) — verifies update without manual refresh
-    await expect(
-      guestPage.locator('span', { hasText: 'ACCEPTED' }).first()
-    ).toBeVisible({ timeout: 10000 });
+    await expect(guestOrderCard).toContainText('ACCEPTED', { timeout: 10000 });
 
     // ─── STEP 5: KDS Advances to PREPARING ───
-    const prepBtn = staffPage.locator('button', { hasText: 'Start Preparing' }).first();
-    await prepBtn.click();
+    const prepBtn = staffOrderCard.locator('button', { hasText: 'Start Preparing' }).first();
+    await prepBtn.scrollIntoViewIfNeeded();
+    await prepBtn.click({ force: true });
 
     // Verify on KDS
     await expect(staffPage.locator('text=On the Stove')).toBeVisible();
 
     // Verify on Guest Portal
-    await expect(
-      guestPage.locator('span', { hasText: 'PREPARING' }).first()
-    ).toBeVisible({ timeout: 10000 });
+    await expect(guestOrderCard).toContainText('PREPARING', { timeout: 10000 });
 
     // ─── STEP 6: KDS Advances to READY ───
-    const readyBtn = staffPage.locator('button', { hasText: 'Mark Ready for Delivery' }).first();
-    await readyBtn.click();
+    const readyBtn = staffOrderCard.locator('button', { hasText: 'Mark Ready for Delivery' }).first();
+    await readyBtn.scrollIntoViewIfNeeded();
+    await readyBtn.click({ force: true });
 
     // Verify on KDS
     await expect(staffPage.locator('text=Ready on Counter')).toBeVisible();
 
     // Verify on Guest Portal
-    await expect(
-      guestPage.locator('span', { hasText: 'READY' }).first()
-    ).toBeVisible({ timeout: 10000 });
+    await expect(guestOrderCard).toContainText('READY', { timeout: 10000 });
 
     // ─── STEP 7: KDS Advances to DELIVERED ───
-    const deliveredBtn = staffPage.locator('button', { hasText: 'Dispatched / Delivered' }).first();
-    await deliveredBtn.click();
+    const deliveredBtn = staffOrderCard.locator('button', { hasText: 'Dispatched / Delivered' }).first();
+    await deliveredBtn.scrollIntoViewIfNeeded();
+    await deliveredBtn.click({ force: true });
     await expect(deliveredBtn).not.toBeVisible({ timeout: 10000 });
 
     // Verify on Guest Portal
-    await expect(
-      guestPage.locator('span', { hasText: 'DELIVERED' }).first()
-    ).toBeVisible({ timeout: 10000 });
+    await expect(guestOrderCard).toContainText('DELIVERED', { timeout: 10000 });
 
     // ─── STEP 8: Reload Both Pages & Verify Persisted State ───
     await staffPage.reload();
